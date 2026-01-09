@@ -2,51 +2,91 @@ package ro.maris.tools.cooktimer.domain.engine
 
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
+import ro.maris.tools.cooktimer.domain.model.StartMode
 
 object TimerReducer {
 
     fun reduce(state: RunState, action: TimerAction): RunState {
         return when (action) {
             is TimerAction.Tick -> onTick(state, action.nowEpochSec)
-            TimerAction.StartPressed -> onStart(state)
-            TimerAction.PausePressed -> onPause(state)
-            TimerAction.ResumePressed -> onResume(state)
+            is TimerAction.StartPressed -> onStart(state, action.nowEpochSec)
+            is TimerAction.PausePressed -> onPause(state, action.nowEpochSec)
+            is TimerAction.ResumePressed -> onResume(state, action.nowEpochSec)
             TimerAction.NextPressed -> onNext(state)
             TimerAction.BackPressed -> onBack(state)
+            is TimerAction.ResetPressed -> onReset(state, action.nowEpochSec)
             is TimerAction.LoadPreset -> state // not used in Phase 1
         }
     }
 
-    private fun onStart(state: RunState): RunState {
+    private fun onStart(state: RunState, nowEpochSec: Long): RunState {
         val step = state.activeStep ?: return state
         val dur = step.durationSec
-        return if (dur == null) {
-            // Gate step: Start doesn't do much; user can Next when ready
-            state.copy(phase = Phase.READY, remainingSec = 0, startedAtEpochSec = null)
+        return if (dur == null || step.startMode == StartMode.MANUAL) {
+            if (state.isStopwatchRunning) {
+                state.copy(nowEpochSec = nowEpochSec)
+            } else {
+                state.copy(
+                    phase = Phase.READY,
+                    endsAtEpochSec = null,
+                    pausedAtEpochSec = null,
+                    stopwatchStartedAtEpochSec = nowEpochSec,
+                    nowEpochSec = nowEpochSec
+                )
+            }
         } else {
-            state.copy(phase = Phase.RUNNING, remainingSec = dur, startedAtEpochSec = null /* set by engine with Tick */)
+            state.copy(
+                phase = Phase.RUNNING,
+                endsAtEpochSec = nowEpochSec + dur,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null,
+                nowEpochSec = nowEpochSec
+            )
         }
     }
 
-    private fun onPause(state: RunState): RunState {
-        return if (state.phase == Phase.RUNNING) state.copy(phase = Phase.PAUSED) else state
+    private fun onPause(state: RunState, nowEpochSec: Long): RunState {
+        if (state.phase != Phase.RUNNING) return state
+        val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to pause running step" }
+        return state.copy(
+            phase = Phase.PAUSED,
+            endsAtEpochSec = endsAt,
+            pausedAtEpochSec = nowEpochSec,
+            stopwatchStartedAtEpochSec = null,
+            nowEpochSec = nowEpochSec
+        )
     }
 
-    private fun onResume(state: RunState): RunState {
-        return if (state.phase == Phase.PAUSED) state.copy(phase = Phase.RUNNING, startedAtEpochSec = null) else state
+    private fun onResume(state: RunState, nowEpochSec: Long): RunState {
+        if (state.phase != Phase.PAUSED) return state
+        val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to resume paused step" }
+        val pausedAt = checkNotNull(state.pausedAtEpochSec) { "pausedAtEpochSec required to resume paused step" }
+        val pausedDuration = (nowEpochSec - pausedAt).coerceAtLeast(0)
+        return state.copy(
+            phase = Phase.RUNNING,
+            endsAtEpochSec = endsAt + pausedDuration,
+            pausedAtEpochSec = null,
+            stopwatchStartedAtEpochSec = null,
+            nowEpochSec = nowEpochSec
+        )
     }
 
     private fun onNext(state: RunState): RunState {
         val nextIndex = state.activeStepIndex + 1
         if (nextIndex >= state.steps.size) {
-            return state.copy(phase = Phase.COMPLETED, remainingSec = 0, startedAtEpochSec = null)
+            return state.copy(
+                phase = Phase.COMPLETED,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null
+            )
         }
-        // Engine will compute correct entry using "enter step" helper with a Tick carrying time.
         return state.copy(
             activeStepIndex = nextIndex,
             phase = Phase.READY,
-            remainingSec = state.steps[nextIndex].durationSec ?: 0,
-            startedAtEpochSec = null
+            endsAtEpochSec = null,
+            pausedAtEpochSec = null,
+            stopwatchStartedAtEpochSec = null
         )
     }
 
@@ -56,56 +96,78 @@ object TimerReducer {
         return state.copy(
             activeStepIndex = prevIndex,
             phase = Phase.READY,
-            remainingSec = state.steps[prevIndex].durationSec ?: 0,
-            startedAtEpochSec = null
+            endsAtEpochSec = null,
+            pausedAtEpochSec = null,
+            stopwatchStartedAtEpochSec = null
         )
     }
 
     private fun onTick(state: RunState, nowEpochSec: Long): RunState {
         val step = state.activeStep ?: return state
         val dur = step.durationSec
+        if (state.phase == Phase.COMPLETED) {
+            return state.copy(nowEpochSec = nowEpochSec)
+        }
 
-        // If we're in READY, ensure remaining matches configured duration for display.
         if (state.phase == Phase.READY) {
-            val remaining = dur ?: 0
-            return state.copy(remainingSec = remaining, startedAtEpochSec = null)
+            return state.copy(
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = state.stopwatchStartedAtEpochSec,
+                nowEpochSec = nowEpochSec
+            )
         }
 
-        // For RUNNING/PAUSED: if no duration, treat as READY.
         if (dur == null) {
-            return state.copy(phase = Phase.READY, remainingSec = 0, startedAtEpochSec = null)
+            return state.copy(
+                phase = Phase.READY,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null,
+                nowEpochSec = nowEpochSec
+            )
         }
 
-        // PAUSED: keep remaining static (do not change).
         if (state.phase == Phase.PAUSED) {
-            return state
+            return state.copy(nowEpochSec = nowEpochSec)
         }
 
-        // RUNNING:
-        val startedAt = state.startedAtEpochSec ?: nowEpochSec
-        val elapsed = (nowEpochSec - startedAt).toInt().coerceAtLeast(0)
-        val remaining = (state.remainingSec - elapsed).coerceAtLeast(0)
-
-        // Update startedAt to now, and keep remaining as "remaining at now"
-        val updated = state.copy(remainingSec = remaining, startedAtEpochSec = nowEpochSec)
+        val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to run a timed step" }
+        val remaining = (endsAt - nowEpochSec).toInt()
+        val updated = state.copy(nowEpochSec = nowEpochSec)
 
         if (remaining > 0) return updated
 
-        // Step complete → advance
         val nextIndex = state.activeStepIndex + 1
         if (nextIndex >= state.steps.size) {
-            return updated.copy(phase = Phase.COMPLETED, startedAtEpochSec = null)
+            return updated.copy(
+                phase = Phase.COMPLETED,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null
+            )
         }
 
-        // Enter next step: auto-run or ready depending on step properties
         val nextStep = state.steps[nextIndex]
         val entry = RunState.entryFor(nextStep, nowEpochSec)
 
         return updated.copy(
             activeStepIndex = nextIndex,
             phase = entry.phase,
-            remainingSec = entry.remainingSec,
-            startedAtEpochSec = entry.startedAtEpochSec
+            endsAtEpochSec = entry.endsAtEpochSec,
+            pausedAtEpochSec = null,
+            stopwatchStartedAtEpochSec = null
+        )
+    }
+
+    private fun onReset(state: RunState, nowEpochSec: Long): RunState {
+        return state.copy(
+            activeStepIndex = 0,
+            phase = Phase.READY,
+            endsAtEpochSec = null,
+            pausedAtEpochSec = null,
+            stopwatchStartedAtEpochSec = null,
+            nowEpochSec = nowEpochSec
         )
     }
 }

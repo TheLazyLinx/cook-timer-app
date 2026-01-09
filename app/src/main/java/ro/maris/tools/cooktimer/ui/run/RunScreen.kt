@@ -8,6 +8,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ro.maris.tools.cooktimer.domain.model.Phase
+import ro.maris.tools.cooktimer.domain.model.StartMode
 
 @Composable
 fun RunScreen(vm: RunViewModel) {
@@ -36,13 +37,24 @@ fun RunScreen(vm: RunViewModel) {
 
         Text(text = "Phase: ${state.phase}", style = MaterialTheme.typography.bodyMedium)
 
-        if (step?.durationSec != null) {
+        if (state.phase == Phase.RUNNING) {
             Text(
-                text = "Remaining: ${formatTime(state.remainingSec)}",
+                text = "Remaining: ${formatTime(requireNotNull(state.remainingSec))}",
+                style = MaterialTheme.typography.headlineLarge
+            )
+        } else if (state.isStopwatchRunning) {
+            Text(
+                text = "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}",
                 style = MaterialTheme.typography.headlineLarge
             )
         } else {
-            Text(text = "No timer (wait step)", style = MaterialTheme.typography.bodyLarge)
+            val label = when (state.phase) {
+                Phase.READY -> "Ready"
+                Phase.PAUSED -> "Paused"
+                Phase.COMPLETED -> "Completed"
+                Phase.RUNNING -> "Running"
+            }
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
         }
 
         Divider()
@@ -60,8 +72,13 @@ fun RunScreen(vm: RunViewModel) {
         }
 
         when (state.phase) {
-            Phase.READY -> Button(onClick = vm::start, modifier = Modifier.fillMaxWidth()) {
-                Text("Start")
+            Phase.READY -> {
+                val isManual = step?.startMode == StartMode.MANUAL || step?.durationSec == null
+                val action = if (isManual && state.isStopwatchRunning) vm::next else vm::start
+                val label = if (isManual && state.isStopwatchRunning) "Next" else "Start"
+                Button(onClick = action, modifier = Modifier.fillMaxWidth()) {
+                    Text(label)
+                }
             }
             Phase.RUNNING -> Button(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
                 Text("Pause")
@@ -69,7 +86,7 @@ fun RunScreen(vm: RunViewModel) {
             Phase.PAUSED -> Button(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
                 Text("Resume")
             }
-            Phase.COMPLETED -> Button(onClick = vm::next, modifier = Modifier.fillMaxWidth()) {
+            Phase.COMPLETED -> Button(onClick = vm::reset, modifier = Modifier.fillMaxWidth()) {
                 Text("Done")
             }
         }

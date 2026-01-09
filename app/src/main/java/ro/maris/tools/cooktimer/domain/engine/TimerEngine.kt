@@ -26,16 +26,34 @@ class TimerEngine(
         ensureTicker()
     }
 
-    fun dispatch(action: TimerAction) {
-        val current = _state.value ?: return
+    fun start() {
         val now = timeProvider.nowEpochSec()
+        dispatchAction(TimerAction.StartPressed(now), now)
+    }
 
-        // Special handling: Start/Resume should set startedAtEpochSec to now on first tick.
+    fun pause() {
+        val now = timeProvider.nowEpochSec()
+        dispatchAction(TimerAction.PausePressed(now), now)
+    }
+
+    fun resume() {
+        val now = timeProvider.nowEpochSec()
+        dispatchAction(TimerAction.ResumePressed(now), now)
+    }
+    fun next() = dispatchAction(TimerAction.NextPressed)
+    fun back() = dispatchAction(TimerAction.BackPressed)
+    fun reset() {
+        val now = timeProvider.nowEpochSec()
+        dispatchAction(TimerAction.ResetPressed(now), now)
+    }
+
+    private fun dispatchAction(action: TimerAction, nowEpochSec: Long = timeProvider.nowEpochSec()) {
+        val current = _state.value ?: return
+
         val reduced = TimerReducer.reduce(current, action)
         _state.value = reduced
 
-        // Drive a tick immediately after actions to apply timeProvider time.
-        tickNow(now)
+        tickNow(nowEpochSec)
         ensureTicker()
     }
 
