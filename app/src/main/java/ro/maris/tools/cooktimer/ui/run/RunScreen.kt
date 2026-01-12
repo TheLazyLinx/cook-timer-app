@@ -11,7 +11,10 @@ import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.StartMode
 
 @Composable
-fun RunScreen(vm: RunViewModel) {
+fun RunScreen(
+    vm: RunViewModel,
+    onBack: () -> Unit
+) {
     val state = vm.state.collectAsState().value
 
     if (state == null) {
@@ -28,6 +31,9 @@ fun RunScreen(vm: RunViewModel) {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        TextButton(onClick = onBack) {
+            Text(text = "Presets")
+        }
         Text(text = "Preset: (running)", style = MaterialTheme.typography.titleMedium)
         Text(text = step?.title ?: "—", style = MaterialTheme.typography.headlineMedium)
 
@@ -47,6 +53,22 @@ fun RunScreen(vm: RunViewModel) {
                 text = "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}",
                 style = MaterialTheme.typography.headlineLarge
             )
+        } else if (state.phase == Phase.PAUSED) {
+            val label = if (step?.durationSec != null) {
+                "Remaining"
+            } else {
+                "Elapsed"
+            }
+            val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
+            Text(
+                text = "$label: ${formatTime(timeValue)}",
+                style = MaterialTheme.typography.headlineLarge
+            )
+        } else if (state.isReadyToAdvance && state.stopwatchElapsedSec != null) {
+            Text(
+                text = "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}",
+                style = MaterialTheme.typography.headlineLarge
+            )
         } else {
             val label = when (state.phase) {
                 Phase.READY -> "Ready"
@@ -57,7 +79,7 @@ fun RunScreen(vm: RunViewModel) {
             Text(text = label, style = MaterialTheme.typography.bodyLarge)
         }
 
-        Divider()
+        HorizontalDivider()
 
         Text(
             text = "Next: ${next?.title ?: "—"}",
@@ -68,26 +90,59 @@ fun RunScreen(vm: RunViewModel) {
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = vm::back) { Text("Back") }
-            OutlinedButton(onClick = vm::next) { Text("Next") }
+            val isLastStep = next == null
+            val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
+            val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
+            val nextAction = if (showRestart) vm::reset else vm::next
+            OutlinedButton(onClick = nextAction) { Text(nextLabel) }
         }
 
         when (state.phase) {
             Phase.READY -> {
-                val isManual = step?.startMode == StartMode.MANUAL || step?.durationSec == null
-                val action = if (isManual && state.isStopwatchRunning) vm::next else vm::start
-                val label = if (isManual && state.isStopwatchRunning) "Next" else "Start"
+                val isLastStep = next == null
+                val action = when {
+                    state.isReadyToAdvance -> if (isLastStep) vm::reset else vm::next
+                    state.isStopwatchRunning -> vm::next
+                    step?.startMode == StartMode.MANUAL || step?.durationSec == null -> vm::start
+                    else -> vm::start
+                }
+                val label = when {
+                    state.isReadyToAdvance -> if (isLastStep) "Restart" else "Next"
+                    state.isStopwatchRunning -> if (isLastStep) "Stop" else "Next"
+                    step?.startMode == StartMode.MANUAL || step?.durationSec == null -> "Start"
+                    else -> "Start"
+                }
                 Button(onClick = action, modifier = Modifier.fillMaxWidth()) {
                     Text(label)
                 }
+                if (state.isStopwatchRunning) {
+                    OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
+                        Text("Pause")
+                    }
+                }
             }
-            Phase.RUNNING -> Button(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
-                Text("Pause")
+            Phase.RUNNING -> {
+                val isLastStep = next == null
+                val label = if (isLastStep) "Stop" else "Next"
+                Button(onClick = vm::next, modifier = Modifier.fillMaxWidth()) {
+                    Text(label)
+                }
+                OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
+                    Text("Pause")
+                }
             }
-            Phase.PAUSED -> Button(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
-                Text("Resume")
+            Phase.PAUSED -> {
+                val isLastStep = next == null
+                val label = if (isLastStep) "Stop" else "Next"
+                Button(onClick = vm::next, modifier = Modifier.fillMaxWidth()) {
+                    Text(label)
+                }
+                OutlinedButton(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
+                    Text("Resume")
+                }
             }
             Phase.COMPLETED -> Button(onClick = vm::reset, modifier = Modifier.fillMaxWidth()) {
-                Text("Done")
+                Text("Restart")
             }
         }
     }

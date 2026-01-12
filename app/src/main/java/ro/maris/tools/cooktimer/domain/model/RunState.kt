@@ -8,6 +8,8 @@ data class RunState(
     val endsAtEpochSec: Long?, // non-null when timing a running/paused step
     val pausedAtEpochSec: Long?, // non-null only while paused
     val stopwatchStartedAtEpochSec: Long?, // non-null when stopwatch running
+    val stopwatchAccumulatedSec: Int, // accumulated when stopwatch is paused
+    val stepCompleted: Boolean, // true when a step finished and awaits manual advance
     val nowEpochSec: Long
 ) {
     val activeStep: Step? get() = steps.getOrNull(activeStepIndex)
@@ -20,12 +22,27 @@ data class RunState(
             val remaining = (endsAt - nowEpochSec).toInt()
             return remaining.coerceAtLeast(0)
         }
+    val pausedRemainingSec: Int?
+        get() {
+            if (phase != Phase.PAUSED) return null
+            val endsAt = endsAtEpochSec ?: return null
+            val pausedAt = pausedAtEpochSec ?: return null
+            val remaining = (endsAt - pausedAt).toInt()
+            return remaining.coerceAtLeast(0)
+        }
+    val isReadyToAdvance: Boolean
+        get() = phase == Phase.READY && stepCompleted
     val stopwatchElapsedSec: Int?
         get() {
-            val startedAt = stopwatchStartedAtEpochSec ?: return null
-            val elapsed = (nowEpochSec - startedAt).toInt()
-            return elapsed.coerceAtLeast(0)
+        val startedAt = stopwatchStartedAtEpochSec
+        val runningElapsed = if (startedAt != null) {
+            (nowEpochSec - startedAt).toInt().coerceAtLeast(0)
+        } else {
+            0
         }
+        val total = stopwatchAccumulatedSec + runningElapsed
+        return if (total == 0 && startedAt == null) null else total
+    }
 
     companion object {
         fun initial(preset: Preset, nowEpochSec: Long): RunState {
@@ -34,8 +51,7 @@ data class RunState(
 
         fun initialFromSteps(presetId: String, steps: List<Step>, nowEpochSec: Long): RunState {
             require(steps.isNotEmpty()) { "Preset must have at least one step" }
-            val step0 = steps[0]
-            val entry = entryFor(step0, nowEpochSec)
+            val entry = Entry(Phase.READY, endsAtEpochSec = null)
             return RunState(
                 presetId = presetId,
                 steps = steps,
@@ -44,6 +60,8 @@ data class RunState(
                 endsAtEpochSec = entry.endsAtEpochSec,
                 pausedAtEpochSec = null,
                 stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = 0,
+                stepCompleted = false,
                 nowEpochSec = nowEpochSec
             )
         }
