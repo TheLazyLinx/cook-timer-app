@@ -1,21 +1,23 @@
 package ro.maris.tools.cooktimer.ui.run
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
-import ro.maris.tools.cooktimer.domain.model.Preset
 import ro.maris.tools.cooktimer.domain.model.RunState
-import ro.maris.tools.cooktimer.domain.model.StartMode
-import ro.maris.tools.cooktimer.domain.model.Step
-import java.util.UUID
+import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class RunViewModel @Inject constructor(
-    timeProvider: TimeProvider
+    timeProvider: TimeProvider,
+    private val presetRepository: PresetRepository,
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private val engine = TimerEngine(
@@ -25,9 +27,7 @@ class RunViewModel @Inject constructor(
 
     val state: StateFlow<RunState?> = engine.state
 
-    init {
-        engine.loadPreset(samplePreset())
-    }
+    private val presetId: String? = savedStateHandle.get<String>("presetId")
 
     fun start() = engine.start()
     fun pause() = engine.pause()
@@ -36,17 +36,15 @@ class RunViewModel @Inject constructor(
     fun back() = engine.back()
     fun reset() = engine.reset()
 
-    private fun samplePreset(): Preset {
-        fun id() = UUID.randomUUID().toString()
-        return Preset(
-            id = id(),
-            name = "Boil (sample)",
-            isBuiltIn = true,
-            steps = listOf(
-                Step(id(), "Wait for boil", null, StartMode.MANUAL, "Start when water begins boiling"),
-                Step(id(), "Boil", 60, StartMode.AUTO, "Keep rolling boil"),
-                Step(id(), "Rest", 20, StartMode.AUTO, "Take off heat and wait")
-            )
-        )
+    init {
+        if (presetId != null) {
+            viewModelScope.launch {
+                presetRepository.observePreset(presetId).collectLatest { preset ->
+                    if (preset != null) {
+                        engine.loadPreset(preset)
+                    }
+                }
+            }
+        }
     }
 }

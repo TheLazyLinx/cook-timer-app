@@ -20,9 +20,12 @@ object TimerReducer {
     }
 
     private fun onStart(state: RunState, nowEpochSec: Long): RunState {
+        if (state.stepCompleted) {
+            return onNext(state)
+        }
         val step = state.activeStep ?: return state
         val dur = step.durationSec
-        return if (dur == null || step.startMode == StartMode.MANUAL) {
+        return if (dur == null) {
             if (state.isStopwatchRunning) {
                 state.copy(nowEpochSec = nowEpochSec)
             } else {
@@ -31,6 +34,8 @@ object TimerReducer {
                     endsAtEpochSec = null,
                     pausedAtEpochSec = null,
                     stopwatchStartedAtEpochSec = nowEpochSec,
+                    stopwatchAccumulatedSec = 0,
+                    stepCompleted = false,
                     nowEpochSec = nowEpochSec
                 )
             }
@@ -40,45 +45,108 @@ object TimerReducer {
                 endsAtEpochSec = nowEpochSec + dur,
                 pausedAtEpochSec = null,
                 stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = 0,
+                stepCompleted = false,
                 nowEpochSec = nowEpochSec
             )
         }
     }
 
     private fun onPause(state: RunState, nowEpochSec: Long): RunState {
-        if (state.phase != Phase.RUNNING) return state
-        val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to pause running step" }
-        return state.copy(
-            phase = Phase.PAUSED,
-            endsAtEpochSec = endsAt,
-            pausedAtEpochSec = nowEpochSec,
-            stopwatchStartedAtEpochSec = null,
-            nowEpochSec = nowEpochSec
-        )
+        return if (state.phase == Phase.RUNNING) {
+            val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to pause running step" }
+            state.copy(
+                phase = Phase.PAUSED,
+                endsAtEpochSec = endsAt,
+                pausedAtEpochSec = nowEpochSec,
+                stopwatchStartedAtEpochSec = null,
+                stepCompleted = false,
+                nowEpochSec = nowEpochSec
+            )
+        } else if (state.phase == Phase.READY && state.isStopwatchRunning) {
+            val startedAt = checkNotNull(state.stopwatchStartedAtEpochSec)
+            val elapsed = (nowEpochSec - startedAt).toInt().coerceAtLeast(0)
+            state.copy(
+                phase = Phase.PAUSED,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = state.stopwatchAccumulatedSec + elapsed,
+                stepCompleted = false,
+                nowEpochSec = nowEpochSec
+            )
+        } else {
+            state
+        }
     }
 
     private fun onResume(state: RunState, nowEpochSec: Long): RunState {
         if (state.phase != Phase.PAUSED) return state
-        val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to resume paused step" }
-        val pausedAt = checkNotNull(state.pausedAtEpochSec) { "pausedAtEpochSec required to resume paused step" }
-        val pausedDuration = (nowEpochSec - pausedAt).coerceAtLeast(0)
-        return state.copy(
-            phase = Phase.RUNNING,
-            endsAtEpochSec = endsAt + pausedDuration,
-            pausedAtEpochSec = null,
-            stopwatchStartedAtEpochSec = null,
-            nowEpochSec = nowEpochSec
-        )
+        val step = state.activeStep ?: return state
+        val dur = step.durationSec
+        return if (dur != null) {
+            val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to resume paused step" }
+            val pausedAt = checkNotNull(state.pausedAtEpochSec) { "pausedAtEpochSec required to resume paused step" }
+            val pausedDuration = (nowEpochSec - pausedAt).coerceAtLeast(0)
+            state.copy(
+                phase = Phase.RUNNING,
+                endsAtEpochSec = endsAt + pausedDuration,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null,
+                stepCompleted = false,
+                nowEpochSec = nowEpochSec
+            )
+        } else {
+            state.copy(
+                phase = Phase.READY,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = nowEpochSec,
+                stepCompleted = false,
+                nowEpochSec = nowEpochSec
+            )
+        }
     }
 
     private fun onNext(state: RunState): RunState {
+        val step = state.activeStep ?: return state
+        if (step.durationSec == null && state.isStopwatchRunning) {
+            val startedAt = state.stopwatchStartedAtEpochSec
+            val elapsed = if (startedAt != null) {
+                (state.nowEpochSec - startedAt).toInt().coerceAtLeast(0)
+            } else {
+                0
+            }
+            val accumulated = state.stopwatchAccumulatedSec + elapsed
+            return if (step.startMode == StartMode.MANUAL) {
+                state.copy(
+                    phase = Phase.READY,
+                    endsAtEpochSec = null,
+                    pausedAtEpochSec = null,
+                    stopwatchStartedAtEpochSec = null,
+                    stopwatchAccumulatedSec = accumulated,
+                    stepCompleted = true
+                )
+            } else {
+                state.copy(
+                    phase = Phase.READY,
+                    endsAtEpochSec = null,
+                    pausedAtEpochSec = null,
+                    stopwatchStartedAtEpochSec = null,
+                    stopwatchAccumulatedSec = accumulated,
+                    stepCompleted = false
+                ).let { onNext(it) }
+            }
+        }
         val nextIndex = state.activeStepIndex + 1
         if (nextIndex >= state.steps.size) {
             return state.copy(
                 phase = Phase.COMPLETED,
                 endsAtEpochSec = null,
                 pausedAtEpochSec = null,
-                stopwatchStartedAtEpochSec = null
+                stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = 0,
+                stepCompleted = false
             )
         }
         return state.copy(
@@ -86,7 +154,9 @@ object TimerReducer {
             phase = Phase.READY,
             endsAtEpochSec = null,
             pausedAtEpochSec = null,
-            stopwatchStartedAtEpochSec = null
+            stopwatchStartedAtEpochSec = null,
+            stopwatchAccumulatedSec = 0,
+            stepCompleted = false
         )
     }
 
@@ -98,7 +168,9 @@ object TimerReducer {
             phase = Phase.READY,
             endsAtEpochSec = null,
             pausedAtEpochSec = null,
-            stopwatchStartedAtEpochSec = null
+            stopwatchStartedAtEpochSec = null,
+            stopwatchAccumulatedSec = 0,
+            stepCompleted = false
         )
     }
 
@@ -114,6 +186,8 @@ object TimerReducer {
                 endsAtEpochSec = null,
                 pausedAtEpochSec = null,
                 stopwatchStartedAtEpochSec = state.stopwatchStartedAtEpochSec,
+                stopwatchAccumulatedSec = state.stopwatchAccumulatedSec,
+                stepCompleted = state.stepCompleted,
                 nowEpochSec = nowEpochSec
             )
         }
@@ -123,7 +197,9 @@ object TimerReducer {
                 phase = Phase.READY,
                 endsAtEpochSec = null,
                 pausedAtEpochSec = null,
-                stopwatchStartedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = state.stopwatchStartedAtEpochSec,
+                stopwatchAccumulatedSec = state.stopwatchAccumulatedSec,
+                stepCompleted = state.stepCompleted,
                 nowEpochSec = nowEpochSec
             )
         }
@@ -138,13 +214,26 @@ object TimerReducer {
 
         if (remaining > 0) return updated
 
+        if (step.startMode == StartMode.MANUAL) {
+            return updated.copy(
+                phase = Phase.READY,
+                endsAtEpochSec = null,
+                pausedAtEpochSec = null,
+                stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = 0,
+                stepCompleted = true
+            )
+        }
+
         val nextIndex = state.activeStepIndex + 1
         if (nextIndex >= state.steps.size) {
             return updated.copy(
                 phase = Phase.COMPLETED,
                 endsAtEpochSec = null,
                 pausedAtEpochSec = null,
-                stopwatchStartedAtEpochSec = null
+                stopwatchStartedAtEpochSec = null,
+                stopwatchAccumulatedSec = 0,
+                stepCompleted = false
             )
         }
 
@@ -156,7 +245,9 @@ object TimerReducer {
             phase = entry.phase,
             endsAtEpochSec = entry.endsAtEpochSec,
             pausedAtEpochSec = null,
-            stopwatchStartedAtEpochSec = null
+            stopwatchStartedAtEpochSec = null,
+            stopwatchAccumulatedSec = 0,
+            stepCompleted = false
         )
     }
 
@@ -167,6 +258,8 @@ object TimerReducer {
             endsAtEpochSec = null,
             pausedAtEpochSec = null,
             stopwatchStartedAtEpochSec = null,
+            stopwatchAccumulatedSec = 0,
+            stepCompleted = false,
             nowEpochSec = nowEpochSec
         )
     }
