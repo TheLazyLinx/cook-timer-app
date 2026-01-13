@@ -2,6 +2,7 @@ package ro.maris.tools.cooktimer.domain.model
 
 data class RunState(
     val presetId: String,
+    val presetName: String,
     val steps: List<Step>,
     val activeStepIndex: Int,
     val phase: Phase,
@@ -46,14 +47,15 @@ data class RunState(
 
     companion object {
         fun initial(preset: Preset, nowEpochSec: Long): RunState {
-            return initialFromSteps(preset.id, preset.steps, nowEpochSec)
+            return initialFromSteps(preset.id, preset.name, preset.steps, nowEpochSec)
         }
 
-        fun initialFromSteps(presetId: String, steps: List<Step>, nowEpochSec: Long): RunState {
+        fun initialFromSteps(presetId: String, presetName: String, steps: List<Step>, nowEpochSec: Long): RunState {
             require(steps.isNotEmpty()) { "Preset must have at least one step" }
             val entry = Entry(Phase.READY, endsAtEpochSec = null)
             return RunState(
                 presetId = presetId,
+                presetName = presetName,
                 steps = steps,
                 activeStepIndex = 0,
                 phase = entry.phase,

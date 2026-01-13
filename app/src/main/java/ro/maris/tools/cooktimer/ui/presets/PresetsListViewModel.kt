@@ -52,9 +52,20 @@ class PresetsListViewModel @Inject constructor(
         _state.value = _state.value.copy(showUpgradeHint = false)
     }
 
-    fun duplicatePreset(source: Preset) {
+    fun duplicatePreset(
+        source: Preset,
+        replaceExisting: Boolean,
+        onCompleted: (String) -> Unit
+    ) {
         viewModelScope.launch {
-            repository.savePreset(source.toDuplicate())
+            if (replaceExisting) {
+                _state.value.customPresets.forEach { preset ->
+                    repository.deletePreset(preset.id)
+                }
+            }
+            val duplicate = source.toDuplicate()
+            repository.savePreset(duplicate)
+            onCompleted(duplicate.id)
         }
     }
 

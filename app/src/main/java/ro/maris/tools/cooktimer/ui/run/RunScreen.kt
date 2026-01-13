@@ -1,14 +1,18 @@
 package ro.maris.tools.cooktimer.ui.run
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.StartMode
+import ro.maris.tools.cooktimer.ui.theme.SoftRed
 
 @Composable
 fun RunScreen(
@@ -27,122 +31,177 @@ fun RunScreen(
     val step = state.activeStep
     val next = state.nextStep
 
+    val isDarkTheme = isSystemInDarkTheme()
+    val accentButtonColors = ButtonDefaults.buttonColors(
+        containerColor = SoftRed,
+        contentColor = Color.White
+    )
+    val accentTextButtonColors = ButtonDefaults.textButtonColors(
+        contentColor = SoftRed
+    )
+    val timerTextStyle = MaterialTheme.typography.displayLarge.copy(
+        fontFamily = FontFamily.Monospace
+    )
+    val canGoBack = state.activeStepIndex > 0
+
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        TextButton(onClick = onBack) {
+        TextButton(
+            onClick = onBack,
+            colors = accentTextButtonColors
+        ) {
             Text(text = "Presets")
         }
-        Text(text = "Preset: (running)", style = MaterialTheme.typography.titleMedium)
-        Text(text = step?.title ?: "—", style = MaterialTheme.typography.headlineMedium)
+        Text(text = state.presetName, style = MaterialTheme.typography.titleMedium)
+        Text(text = step?.title ?: "-", style = MaterialTheme.typography.headlineSmall)
+
+        val timerText = when {
+            state.phase == Phase.RUNNING -> "Remaining: ${formatTime(requireNotNull(state.remainingSec))}"
+            state.isStopwatchRunning -> "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
+            state.phase == Phase.PAUSED -> {
+                val label = if (step?.durationSec != null) "Remaining" else "Elapsed"
+                val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
+                "$label: ${formatTime(timeValue)}"
+            }
+            state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
+                "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
+            state.phase == Phase.READY -> "Ready"
+            else -> {
+                val label = when (state.phase) {
+                    Phase.READY -> "Ready"
+                    Phase.PAUSED -> "Paused"
+                    Phase.COMPLETED -> "Completed"
+                    Phase.RUNNING -> "Running"
+                }
+                label
+            }
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = timerText,
+                style = timerTextStyle,
+                color = if (isDarkTheme && (state.phase == Phase.RUNNING || state.isStopwatchRunning)) {
+                    SoftRed
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+        }
+        Text(
+            text = when (state.phase) {
+                Phase.READY -> "READY"
+                Phase.RUNNING -> "RUNNING"
+                Phase.PAUSED -> "PAUSED"
+                Phase.COMPLETED -> "COMPLETED"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        )
 
         if (!step?.notes.isNullOrBlank()) {
-            Text(text = step!!.notes!!, style = MaterialTheme.typography.bodyMedium)
-        }
-
-        Text(text = "Phase: ${state.phase}", style = MaterialTheme.typography.bodyMedium)
-
-        if (state.phase == Phase.RUNNING) {
-            Text(
-                text = "Remaining: ${formatTime(requireNotNull(state.remainingSec))}",
-                style = MaterialTheme.typography.headlineLarge
-            )
-        } else if (state.isStopwatchRunning) {
-            Text(
-                text = "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}",
-                style = MaterialTheme.typography.headlineLarge
-            )
-        } else if (state.phase == Phase.PAUSED) {
-            val label = if (step?.durationSec != null) {
-                "Remaining"
-            } else {
-                "Elapsed"
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = step!!.notes!!,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.widthIn(max = 360.dp)
+                )
             }
-            val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
-            Text(
-                text = "$label: ${formatTime(timeValue)}",
-                style = MaterialTheme.typography.headlineLarge
-            )
-        } else if (state.isReadyToAdvance && state.stopwatchElapsedSec != null) {
-            Text(
-                text = "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}",
-                style = MaterialTheme.typography.headlineLarge
-            )
-        } else {
-            val label = when (state.phase) {
-                Phase.READY -> "Ready"
-                Phase.PAUSED -> "Paused"
-                Phase.COMPLETED -> "Completed"
-                Phase.RUNNING -> "Running"
-            }
-            Text(text = label, style = MaterialTheme.typography.bodyLarge)
         }
-
-        HorizontalDivider()
-
-        Text(
-            text = "Next: ${next?.title ?: "—"}",
-            style = MaterialTheme.typography.bodyMedium
-        )
 
         Spacer(Modifier.weight(1f))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = vm::back) { Text("Back") }
-            val isLastStep = next == null
-            val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
-            val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
-            val nextAction = if (showRestart) vm::reset else vm::next
-            OutlinedButton(onClick = nextAction) { Text(nextLabel) }
-        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            HorizontalDivider()
 
-        when (state.phase) {
-            Phase.READY -> {
+            Text(
+                text = "Next: ${next?.title ?: "-"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = vm::back, enabled = canGoBack) { Text("Back") }
                 val isLastStep = next == null
-                val action = when {
-                    state.isReadyToAdvance -> if (isLastStep) vm::reset else vm::next
-                    state.isStopwatchRunning -> vm::next
-                    step?.startMode == StartMode.MANUAL || step?.durationSec == null -> vm::start
-                    else -> vm::start
+                val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
+                val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
+                val nextAction = if (showRestart) vm::reset else vm::next
+                OutlinedButton(onClick = nextAction) { Text(nextLabel) }
+            }
+
+            when (state.phase) {
+                Phase.READY -> {
+                    val isLastStep = next == null
+                    val action = when {
+                        state.isReadyToAdvance -> if (isLastStep) vm::reset else vm::next
+                        state.isStopwatchRunning -> vm::next
+                        step?.startMode == StartMode.MANUAL || step?.durationSec == null -> vm::start
+                        else -> vm::start
+                    }
+                    val label = when {
+                        state.isReadyToAdvance -> if (isLastStep) "Restart" else "Next"
+                        state.isStopwatchRunning -> if (isLastStep) "Stop" else "Next"
+                        step?.startMode == StartMode.MANUAL || step?.durationSec == null -> "Start"
+                        else -> "Start"
+                    }
+                    Button(
+                        onClick = action,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = accentButtonColors
+                    ) {
+                        Text(label)
+                    }
+                    if (state.isStopwatchRunning) {
+                        OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
+                            Text("Pause")
+                        }
+                    }
                 }
-                val label = when {
-                    state.isReadyToAdvance -> if (isLastStep) "Restart" else "Next"
-                    state.isStopwatchRunning -> if (isLastStep) "Stop" else "Next"
-                    step?.startMode == StartMode.MANUAL || step?.durationSec == null -> "Start"
-                    else -> "Start"
-                }
-                Button(onClick = action, modifier = Modifier.fillMaxWidth()) {
-                    Text(label)
-                }
-                if (state.isStopwatchRunning) {
+                Phase.RUNNING -> {
+                    val isLastStep = next == null
+                    val label = if (isLastStep) "Stop" else "Next"
+                    Button(
+                        onClick = vm::next,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = accentButtonColors
+                    ) {
+                        Text(label)
+                    }
                     OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
                         Text("Pause")
                     }
                 }
-            }
-            Phase.RUNNING -> {
-                val isLastStep = next == null
-                val label = if (isLastStep) "Stop" else "Next"
-                Button(onClick = vm::next, modifier = Modifier.fillMaxWidth()) {
-                    Text(label)
+                Phase.PAUSED -> {
+                    val isLastStep = next == null
+                    val label = if (isLastStep) "Stop" else "Next"
+                    Button(
+                        onClick = vm::next,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = accentButtonColors
+                    ) {
+                        Text(label)
+                    }
+                    OutlinedButton(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
+                        Text("Resume")
+                    }
                 }
-                OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
-                    Text("Pause")
+                Phase.COMPLETED -> Button(
+                    onClick = vm::reset,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = accentButtonColors
+                ) {
+                    Text("Restart")
                 }
-            }
-            Phase.PAUSED -> {
-                val isLastStep = next == null
-                val label = if (isLastStep) "Stop" else "Next"
-                Button(onClick = vm::next, modifier = Modifier.fillMaxWidth()) {
-                    Text(label)
-                }
-                OutlinedButton(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
-                    Text("Resume")
-                }
-            }
-            Phase.COMPLETED -> Button(onClick = vm::reset, modifier = Modifier.fillMaxWidth()) {
-                Text("Restart")
             }
         }
     }
