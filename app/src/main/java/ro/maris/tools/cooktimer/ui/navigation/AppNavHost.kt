@@ -22,7 +22,11 @@ object Routes {
 }
 
 @Composable
-fun AppNavHost(modifier: Modifier = Modifier) {
+fun AppNavHost(
+    modifier: Modifier = Modifier,
+    isDarkTheme: Boolean,
+    onToggleTheme: () -> Unit
+) {
     val navController = rememberNavController()
 
     NavHost(
@@ -34,6 +38,8 @@ fun AppNavHost(modifier: Modifier = Modifier) {
             val vm: PresetsListViewModel = hiltViewModel()
             PresetsListScreen(
                 vm = vm,
+                isDarkTheme = isDarkTheme,
+                onToggleTheme = onToggleTheme,
                 onRun = { presetId ->
                     navController.navigate("${Routes.RUN}/$presetId") {
                         launchSingleTop = true

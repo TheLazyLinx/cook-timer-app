@@ -44,7 +44,11 @@ class EditPresetViewModel @Inject constructor(
     }
 
     fun updateName(value: String) {
-        _state.value = _state.value.copy(name = value, warningMessage = null)
+        _state.value = _state.value.copy(
+            name = value,
+            warningMessage = null,
+            nameError = false
+        )
     }
 
     fun addStep() {
@@ -61,6 +65,9 @@ class EditPresetViewModel @Inject constructor(
 
     fun updateStepTitle(stepId: String, value: String) {
         updateStep(stepId) { it.copy(title = value) }
+        _state.value = _state.value.copy(
+            stepTitleErrors = _state.value.stepTitleErrors - stepId
+        )
     }
 
     fun updateStepNotes(stepId: String, value: String) {
@@ -69,13 +76,23 @@ class EditPresetViewModel @Inject constructor(
 
     fun toggleDuration(stepId: String, enabled: Boolean) {
         updateStep(stepId) {
-            val duration = if (enabled) it.durationSec else ""
+            val current = it.durationSec.toIntOrNull() ?: 0
+            val duration = if (enabled) {
+                if (current <= 0) "1" else current.toString()
+            } else {
+                ""
+            }
             it.copy(durationEnabled = enabled, durationSec = duration)
         }
     }
 
     fun updateDuration(stepId: String, value: String) {
-        updateStep(stepId) { it.copy(durationSec = value) }
+        updateStep(stepId) {
+            val cleaned = value.filter { ch -> ch.isDigit() }
+            val parsed = cleaned.toIntOrNull() ?: 0
+            val safe = if (parsed <= 0) "1" else parsed.toString()
+            it.copy(durationSec = safe)
+        }
     }
 
     fun updateStartMode(stepId: String, startMode: StartMode) {
@@ -111,8 +128,12 @@ class EditPresetViewModel @Inject constructor(
 
     fun save(onSaved: () -> Unit) {
         val validation = validate(_state.value)
-        if (validation != null) {
-            _state.value = _state.value.copy(warningMessage = validation)
+        if (validation.message != null) {
+            _state.value = _state.value.copy(
+                warningMessage = validation.message,
+                nameError = validation.nameError,
+                stepTitleErrors = validation.stepTitleErrors
+            )
             return
         }
         viewModelScope.launch {
@@ -121,19 +142,38 @@ class EditPresetViewModel @Inject constructor(
         }
     }
 
-    private fun validate(state: EditPresetState): String? {
-        if (state.name.isBlank()) return "Preset name is required"
-        if (state.steps.isEmpty()) return "Add at least one step"
+    private fun validate(state: EditPresetState): ValidationResult {
+        var message: String? = null
+        var nameError = false
+        val stepTitleErrors = mutableSetOf<String>()
+
+        if (state.name.isBlank()) {
+            nameError = true
+            message = "Add a preset name to continue."
+        }
+        if (state.steps.isEmpty() && message == null) {
+            message = "Add at least one step to continue."
+        }
         state.steps.forEachIndexed { index, step ->
-            if (step.title.isBlank()) return "Step ${index + 1} title is required"
+            if (step.title.isBlank()) {
+                stepTitleErrors.add(step.id)
+                if (message == null) {
+                    message = "Add a title for step ${index + 1}."
+                }
+            }
             if (step.durationEnabled) {
-                val value = step.durationSec.toIntOrNull()
-                if (value == null || value <= 0) {
-                    return "Step ${index + 1} duration must be > 0"
+                val value = step.durationSec.toIntOrNull() ?: 0
+                if (value <= 0 && message == null) {
+                    message = "Enter a duration greater than 0 for step ${index + 1}."
                 }
             }
         }
-        return null
+
+        return ValidationResult(
+            message = message,
+            nameError = nameError,
+            stepTitleErrors = stepTitleErrors
+        )
     }
 
     private fun updateStep(stepId: String, transform: (EditStepItem) -> EditStepItem) {
@@ -160,7 +200,9 @@ data class EditPresetState(
     val name: String = "",
     val isBuiltIn: Boolean = false,
     val steps: List<EditStepItem> = emptyList(),
-    val warningMessage: String? = null
+    val warningMessage: String? = null,
+    val nameError: Boolean = false,
+    val stepTitleErrors: Set<String> = emptySet()
 ) {
     fun toDomainPreset(): Preset {
         val id = presetId ?: UUID.randomUUID().toString()
@@ -192,3 +234,9 @@ data class EditStepItem(
         )
     }
 }
+
+private data class ValidationResult(
+    val message: String?,
+    val nameError: Boolean,
+    val stepTitleErrors: Set<String>
+)
