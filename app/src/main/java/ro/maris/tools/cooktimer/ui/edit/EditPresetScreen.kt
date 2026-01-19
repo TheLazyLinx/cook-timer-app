@@ -31,14 +31,20 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
+import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
+import ro.maris.tools.cooktimer.audio.SfxId
+import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 
@@ -49,12 +55,17 @@ fun EditPresetScreen(
     onSaved: () -> Unit
 ) {
     val state by vm.state.collectAsState()
+    val sfx = LocalSfxPlayer.current
     val accentButtonColors = androidx.compose.material3.ButtonDefaults.buttonColors(
         containerColor = SoftRed,
         contentColor = Color.White
     )
     val focusManager = LocalFocusManager.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val onSavedWithSfx = {
+        sfx.play(SfxId.PresetSaved)
+        onSaved()
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -77,14 +88,17 @@ fun EditPresetScreen(
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { vm.save(onSaved) },
+                        onClick = sfxClick(sfx) { vm.save(onSavedWithSfx) },
                         modifier = Modifier.weight(1f),
                         colors = accentButtonColors
                     ) {
                         Text("Save")
                     }
                     OutlinedButton(
-                        onClick = vm::addStep,
+                        onClick = sfxClick(sfx) {
+                            vm.addStep()
+                            sfx.play(SfxId.StepAdded)
+                        },
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Add Step")
@@ -99,7 +113,7 @@ fun EditPresetScreen(
         ) {
             Box(modifier = Modifier.fillMaxWidth()) {
                 TextButton(
-                    onClick = onBack,
+                    onClick = sfxClick(sfx, SfxId.NavPresets) { onBack() },
                     modifier = Modifier.align(Alignment.CenterStart)
                 ) { Text("Back") }
                 Text(
@@ -130,8 +144,8 @@ fun EditPresetScreen(
             Text(text = "Steps", style = MaterialTheme.typography.titleMedium)
 
             val listState = rememberLazyListState()
-            val firstVisibleId by derivedStateOf {
-                state.steps.getOrNull(listState.firstVisibleItemIndex)?.id
+            val firstVisibleId by remember(state.steps, listState) {
+                derivedStateOf { state.steps.getOrNull(listState.firstVisibleItemIndex)?.id }
             }
             LazyColumn(
                 modifier = Modifier.weight(1f, fill = true),
@@ -147,12 +161,30 @@ fun EditPresetScreen(
                         showTitleError = state.stepTitleErrors.contains(step.id),
                         onTitleChange = { vm.updateStepTitle(step.id, it) },
                         onNotesChange = { vm.updateStepNotes(step.id, it) },
-                        onDurationToggle = { vm.toggleDuration(step.id, it) },
+                        onDurationToggle = {
+                            focusManager.clearFocus(force = true)
+                            sfx.play(SfxId.ButtonPress)
+                            vm.toggleDuration(step.id, it)
+                        },
                         onDurationChange = { vm.updateDuration(step.id, it) },
-                        onStartModeChange = { vm.updateStartMode(step.id, it) },
-                        onMoveUp = { vm.moveStepUp(step.id) },
-                        onMoveDown = { vm.moveStepDown(step.id) },
-                        onDelete = { vm.removeStep(step.id) }
+                        onDurationBlur = { vm.sanitizeDuration(step.id) },
+                        onStartModeChange = {
+                            sfx.play(SfxId.ButtonPress)
+                            vm.updateStartMode(step.id, it)
+                        },
+                        onMoveUp = sfxClick(sfx) {
+                            focusManager.clearFocus(force = true)
+                            vm.moveStepUp(step.id)
+                        },
+                        onMoveDown = sfxClick(sfx) {
+                            focusManager.clearFocus(force = true)
+                            vm.moveStepDown(step.id)
+                        },
+                        onDelete = sfxClick(sfx) {
+                            focusManager.clearFocus(force = true)
+                            vm.removeStep(step.id)
+                        },
+                        onAutoParse = { sfx.play(SfxId.AutoParse) }
                     )
                 }
             }
@@ -171,14 +203,16 @@ private fun StepEditorCard(
     onNotesChange: (String) -> Unit,
     onDurationToggle: (Boolean) -> Unit,
     onDurationChange: (String) -> Unit,
+    onDurationBlur: () -> Unit,
     onStartModeChange: (StartMode) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAutoParse: () -> Unit
 ) {
     val durationSecValue = step.durationSec.toIntOrNull() ?: 0
-    val durationMinutes = (durationSecValue / 60).toString()
-    val durationSeconds = (durationSecValue % 60).toString()
+    val durationMinutes = if (step.durationSec.isBlank()) "" else (durationSecValue / 60).toString()
+    val durationSeconds = if (step.durationSec.isBlank()) "" else (durationSecValue % 60).toString()
 
     val cardModifier = if (isOnlyStep) {
         Modifier.fillMaxWidth()
@@ -225,24 +259,48 @@ private fun StepEditorCard(
                     OutlinedTextField(
                         value = durationMinutes,
                         onValueChange = { value ->
-                            val minutes = value.filter { it.isDigit() }.take(3).toIntOrNull() ?: 0
+                            val cleaned = value.filter { it.isDigit() }.take(3)
+                            if (cleaned != value) {
+                                onAutoParse()
+                            }
+                            val minutes = cleaned.toIntOrNull() ?: 0
                             val seconds = durationSeconds.toIntOrNull() ?: 0
-                            onDurationChange((minutes * 60 + seconds).toString())
+                            val total = minutes * 60 + seconds
+                            val next = if (cleaned.isBlank() && durationSeconds.isBlank()) "" else total.toString()
+                            onDurationChange(next)
                         },
                         label = { Text("Min") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused) {
+                                    onDurationBlur()
+                                }
+                            }
                     )
                     OutlinedTextField(
                         value = durationSeconds,
                         onValueChange = { value ->
                             val minutes = durationMinutes.toIntOrNull() ?: 0
-                            val seconds = value.filter { it.isDigit() }.take(2).toIntOrNull() ?: 0
-                            onDurationChange((minutes * 60 + seconds).toString())
+                            val cleaned = value.filter { it.isDigit() }.take(2)
+                            if (cleaned != value) {
+                                onAutoParse()
+                            }
+                            val seconds = cleaned.toIntOrNull() ?: 0
+                            val total = minutes * 60 + seconds
+                            val next = if (durationMinutes.isBlank() && cleaned.isBlank()) "" else total.toString()
+                            onDurationChange(next)
                         },
                         label = { Text("Sec") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { focusState ->
+                                if (!focusState.isFocused) {
+                                    onDurationBlur()
+                                }
+                            }
                     )
                 }
             }
