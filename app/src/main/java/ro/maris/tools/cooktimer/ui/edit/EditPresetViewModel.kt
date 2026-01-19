@@ -44,8 +44,9 @@ class EditPresetViewModel @Inject constructor(
     }
 
     fun updateName(value: String) {
+        val trimmed = value.take(64)
         _state.value = _state.value.copy(
-            name = value,
+            name = trimmed,
             warningMessage = null,
             nameError = false
         )
@@ -64,14 +65,14 @@ class EditPresetViewModel @Inject constructor(
     }
 
     fun updateStepTitle(stepId: String, value: String) {
-        updateStep(stepId) { it.copy(title = value) }
+        updateStep(stepId) { it.copy(title = value.take(64)) }
         _state.value = _state.value.copy(
             stepTitleErrors = _state.value.stepTitleErrors - stepId
         )
     }
 
     fun updateStepNotes(stepId: String, value: String) {
-        updateStep(stepId) { it.copy(notes = value) }
+        updateStep(stepId) { it.copy(notes = value.take(256)) }
     }
 
     fun toggleDuration(stepId: String, enabled: Boolean) {
@@ -89,7 +90,14 @@ class EditPresetViewModel @Inject constructor(
     fun updateDuration(stepId: String, value: String) {
         updateStep(stepId) {
             val cleaned = value.filter { ch -> ch.isDigit() }
-            val parsed = cleaned.toIntOrNull() ?: 0
+            it.copy(durationSec = cleaned)
+        }
+    }
+
+    fun sanitizeDuration(stepId: String) {
+        updateStep(stepId) {
+            if (!it.durationEnabled) return@updateStep it
+            val parsed = it.durationSec.toIntOrNull() ?: 0
             val safe = if (parsed <= 0) "1" else parsed.toString()
             it.copy(durationSec = safe)
         }

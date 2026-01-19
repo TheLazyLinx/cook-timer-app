@@ -43,6 +43,9 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
+import ro.maris.tools.cooktimer.audio.SfxId
+import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.domain.model.Preset
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 
@@ -51,6 +54,7 @@ fun PresetsListScreen(
     vm: PresetsListViewModel,
     isDarkTheme: Boolean,
     onToggleTheme: () -> Unit,
+    onSoundTest: () -> Unit,
     onRun: (String) -> Unit,
     onEdit: (String?) -> Unit
 ) {
@@ -58,6 +62,7 @@ fun PresetsListScreen(
         // Consume back press on the presets root screen.
     }
     val state by vm.state.collectAsState()
+    val sfx = LocalSfxPlayer.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var pendingDuplicate by remember { mutableStateOf<Preset?>(null) }
@@ -79,6 +84,7 @@ fun PresetsListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        sfx.play(SfxId.PresetDuplicate)
                         val preset = pendingDuplicate
                         pendingDuplicate = null
                         if (preset != null) {
@@ -95,7 +101,7 @@ fun PresetsListScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDuplicate = null }) {
+                TextButton(onClick = sfxClick(sfx) { pendingDuplicate = null }) {
                     Text("Cancel")
                 }
             }
@@ -116,7 +122,7 @@ fun PresetsListScreen(
                             text = "Unlock more presets by purchasing the app.",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        TextButton(onClick = vm::dismissUpgradeHint) {
+                        TextButton(onClick = sfxClick(sfx) { vm.dismissUpgradeHint() }) {
                             Text("Upgrade Later")
                         }
                     }
@@ -128,26 +134,31 @@ fun PresetsListScreen(
             items(state.builtIns, key = { it.id }) { preset ->
                 PresetRow(
                     preset = preset,
-                    onRun = { onRun(preset.id) },
+                    onRun = sfxClick(sfx) { onRun(preset.id) },
                     onDuplicate = {
                         if (state.isCustomLimitReached) {
+                            sfx.play(SfxId.PresetDuplicateClick)
                             pendingDuplicate = preset
                         } else {
+                            sfx.play(SfxId.PresetDuplicateClick)
                             vm.duplicatePreset(source = preset, replaceExisting = false) { newId ->
                                 onEdit(newId)
                             }
                         }
                     },
                     onEdit = {
+                        sfx.play(SfxId.PresetEdit)
                         scope.launch {
                             snackbarHostState.showSnackbar("Built-in presets can't be edited.")
                         }
                     },
                     onDelete = {
+                        sfx.play(SfxId.PresetDelete)
                         scope.launch {
                             snackbarHostState.showSnackbar("Built-in presets can't be deleted.")
                         }
-                    }
+                    },
+                    onMenuOpen = sfxClick(sfx) {}
                 )
             }
             item {
@@ -164,7 +175,7 @@ fun PresetsListScreen(
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Button(
-                            onClick = { vm.onNewPresetClick { onEdit(null) } },
+                            onClick = sfxClick(sfx) { vm.onNewPresetClick { onEdit(null) } },
                             modifier = Modifier.fillMaxWidth(),
                             colors = accentButtonColors
                         ) {
@@ -176,14 +187,16 @@ fun PresetsListScreen(
             items(state.customPresets, key = { it.id }) { preset ->
                 PresetRow(
                     preset = preset,
-                    onRun = { onRun(preset.id) },
+                    onRun = sfxClick(sfx) { onRun(preset.id) },
                     onDuplicate = {
+                        sfx.play(SfxId.PresetDuplicateClick)
                         scope.launch {
                             snackbarHostState.showSnackbar("Free version supports 1 custom preset.")
                         }
                     },
-                    onEdit = { onEdit(preset.id) },
-                    onDelete = { vm.deletePreset(preset) }
+                    onEdit = sfxClick(sfx, SfxId.PresetEdit) { onEdit(preset.id) },
+                    onDelete = sfxClick(sfx, SfxId.PresetDelete) { vm.deletePreset(preset) },
+                    onMenuOpen = sfxClick(sfx) {}
                 )
             }
             if (state.customPresets.isNotEmpty()) {
@@ -210,11 +223,20 @@ fun PresetsListScreen(
             }
             item {
                 Button(
-                    onClick = onToggleTheme,
+                    onClick = sfxClick(sfx) { onToggleTheme() },
                     modifier = Modifier.fillMaxWidth(),
                     colors = accentButtonColors
                 ) {
                     Text(toggleLabel)
+                }
+            }
+            item {
+                Button(
+                    onClick = sfxClick(sfx) { onSoundTest() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = accentButtonColors
+                ) {
+                    Text("Sound Test")
                 }
             }
         }
@@ -232,7 +254,8 @@ private fun PresetRow(
     onRun: () -> Unit,
     onDuplicate: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onMenuOpen: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -253,7 +276,10 @@ private fun PresetRow(
                     IconButton(onClick = onDuplicate) {
                         Icon(imageVector = Icons.Outlined.ContentCopy, contentDescription = "Duplicate")
                     }
-                    IconButton(onClick = { menuExpanded = true }) {
+                    IconButton(onClick = {
+                        onMenuOpen()
+                        menuExpanded = true
+                    }) {
                         Icon(imageVector = Icons.Outlined.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -282,8 +308,13 @@ private fun presetSummary(preset: Preset): String {
     if (timedSec <= 0) {
         return stepLabel
     }
-    val minutes = (timedSec + 59) / 60
-    val base = "$stepLabel • $minutes min"
+    val base = if (timedSec < 60) {
+        "$stepLabel  -  $timedSec sec"
+    } else {
+        val minutes = (timedSec + 59) / 60
+        "$stepLabel  -  $minutes min"
+    }
     val hasUntimed = preset.steps.any { it.durationSec == null }
     return if (hasUntimed) "$base + Extra time" else base
 }
+

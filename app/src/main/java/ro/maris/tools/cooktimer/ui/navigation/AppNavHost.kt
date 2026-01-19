@@ -14,11 +14,14 @@ import ro.maris.tools.cooktimer.ui.presets.PresetsListScreen
 import ro.maris.tools.cooktimer.ui.presets.PresetsListViewModel
 import ro.maris.tools.cooktimer.ui.run.RunScreen
 import ro.maris.tools.cooktimer.ui.run.RunViewModel
+import ro.maris.tools.cooktimer.ui.sound.SoundTestScreen
+import ro.maris.tools.cooktimer.ui.sound.SoundTestViewModel
 
 object Routes {
     const val PRESETS = "presets"
     const val EDIT = "edit"
     const val RUN = "run"
+    const val SOUND_TEST = "sound_test"
 }
 
 @Composable
@@ -40,6 +43,7 @@ fun AppNavHost(
                 vm = vm,
                 isDarkTheme = isDarkTheme,
                 onToggleTheme = onToggleTheme,
+                onSoundTest = { navController.navigate(Routes.SOUND_TEST) },
                 onRun = { presetId ->
                     navController.navigate("${Routes.RUN}/$presetId") {
                         launchSingleTop = true
@@ -90,6 +94,13 @@ fun AppNavHost(
                         launchSingleTop = true
                     }
                 }
+            )
+        }
+        composable(Routes.SOUND_TEST) {
+            val vm: SoundTestViewModel = hiltViewModel()
+            SoundTestScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
             )
         }
     }

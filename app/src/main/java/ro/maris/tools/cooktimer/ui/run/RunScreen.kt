@@ -5,11 +5,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
+import ro.maris.tools.cooktimer.audio.sfxClick
+import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
@@ -26,6 +35,31 @@ fun RunScreen(
             Text("No preset loaded")
         }
         return
+    }
+
+    val sfx = LocalSfxPlayer.current
+    var lastState by remember { mutableStateOf(state) }
+
+    LaunchedEffect(state) {
+        val prev = lastState
+        val autoAdvanced = state.activeStepIndex > prev.activeStepIndex && !prev.stepCompleted
+        if (prev.phase != Phase.COMPLETED && state.phase == Phase.COMPLETED) {
+            sfx.play(SfxId.PresetFinished)
+        } else if (state.phase != Phase.COMPLETED && autoAdvanced) {
+            sfx.play(SfxId.TimerFinished)
+            delay(140)
+            sfx.play(SfxId.StepStart)
+        } else {
+            if (state.phase != Phase.COMPLETED && state.stepCompleted && !prev.stepCompleted) {
+                sfx.play(SfxId.TimerFinished)
+            }
+            if ((prev.phase == Phase.READY && state.phase == Phase.RUNNING) ||
+                (!prev.isStopwatchRunning && state.isStopwatchRunning)
+            ) {
+                sfx.play(SfxId.StepStart)
+            }
+        }
+        lastState = state
     }
 
     val step = state.activeStep
@@ -49,7 +83,7 @@ fun RunScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         TextButton(
-            onClick = onBack,
+            onClick = sfxClick(sfx, SfxId.NavPresets) { onBack() },
             colors = accentTextButtonColors
         ) {
             Text(text = "Presets")
@@ -131,12 +165,12 @@ fun RunScreen(
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = vm::back, enabled = canGoBack) { Text("Back") }
+                OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.back() }, enabled = canGoBack) { Text("Back") }
                 val isLastStep = next == null
                 val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
                 val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
                 val nextAction = if (showRestart) vm::reset else vm::next
-                OutlinedButton(onClick = nextAction) { Text(nextLabel) }
+                OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { nextAction() }) { Text(nextLabel) }
             }
 
             when (state.phase) {
@@ -155,14 +189,14 @@ fun RunScreen(
                         else -> "Start"
                     }
                     Button(
-                        onClick = action,
+                        onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { action() },
                         modifier = Modifier.fillMaxWidth(),
                         colors = accentButtonColors
                     ) {
                         Text(label)
                     }
                     if (state.isStopwatchRunning) {
-                        OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
                             Text("Pause")
                         }
                     }
@@ -171,13 +205,13 @@ fun RunScreen(
                     val isLastStep = next == null
                     val label = if (isLastStep) "Stop" else "Next"
                     Button(
-                        onClick = vm::next,
+                        onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
                         modifier = Modifier.fillMaxWidth(),
                         colors = accentButtonColors
                     ) {
                         Text(label)
                     }
-                    OutlinedButton(onClick = vm::pause, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Pause")
                     }
                 }
@@ -185,18 +219,18 @@ fun RunScreen(
                     val isLastStep = next == null
                     val label = if (isLastStep) "Stop" else "Next"
                     Button(
-                        onClick = vm::next,
+                        onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
                         modifier = Modifier.fillMaxWidth(),
                         colors = accentButtonColors
                     ) {
                         Text(label)
                     }
-                    OutlinedButton(onClick = vm::resume, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.resume() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Resume")
                     }
                 }
                 Phase.COMPLETED -> Button(
-                    onClick = vm::reset,
+                    onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
                     modifier = Modifier.fillMaxWidth(),
                     colors = accentButtonColors
                 ) {
