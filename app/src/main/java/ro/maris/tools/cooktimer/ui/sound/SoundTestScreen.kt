@@ -99,16 +99,40 @@ fun SoundTestScreen(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val indicatorColor = if (state.isLit) Color.Red else MaterialTheme.colorScheme.surfaceVariant
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .background(indicatorColor, shape = androidx.compose.foundation.shape.CircleShape)
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val detectionColor = if (state.isLit) Color.Red else MaterialTheme.colorScheme.surfaceVariant
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(detectionColor, shape = androidx.compose.foundation.shape.CircleShape)
+                )
+                Text("Detection", style = MaterialTheme.typography.labelSmall)
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val intensity = (state.currentRms * 20f).coerceIn(0f, 1f)
+                val continuousColor = Color(
+                    red = intensity,
+                    green = 1f - intensity * 0.5f,
+                    blue = 0f
+                )
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(continuousColor, shape = androidx.compose.foundation.shape.CircleShape)
+                )
+                Text("Continuous", style = MaterialTheme.typography.labelSmall)
+            }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Detections: ${state.count}")
                 Text("Strength: ${"%.3f".format(state.lastStrength)}")
                 Text("Peak: ${"%.3f".format(state.lastPeak)}")
+                Text("Current: ${"%.3f".format(state.currentRms)}")
             }
         }
 
