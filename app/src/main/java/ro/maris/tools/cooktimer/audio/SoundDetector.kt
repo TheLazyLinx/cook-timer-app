@@ -8,6 +8,7 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,7 @@ data class SoundDetectorState(
     val lastPeak: Float = 0f,
     val rms: Float = 0f,
     val noiseFloor: Float = 0f,
+    val currentRms: Float = 0f,
     val events: List<SoundDetectionEvent> = emptyList()
 )
 
@@ -42,7 +44,7 @@ class SoundDetector @Inject constructor(
     @ApplicationContext context: Context
 ) {
     private val appContext = context.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(SoundDetectorState())
     val state: StateFlow<SoundDetectorState> = _state
 
@@ -82,7 +84,7 @@ class SoundDetector @Inject constructor(
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(windowSamples * 2)
 
-        val recorder = AudioRecord(
+        var recorder = AudioRecord(
             MediaRecorder.AudioSource.MIC,
             sampleRate,
             AudioFormat.CHANNEL_IN_MONO,
@@ -96,11 +98,28 @@ class SoundDetector @Inject constructor(
         }
         val buffer = ShortArray(windowSamples)
         var noiseFloor = 0.005f
+        var flatlineCount = 0
+        val maxFlatlineBeforeRestart = 30 // ~3 seconds at 100ms windows
         recorder.startRecording()
+        Log.d("SoundDetector", "Recording started, buffer size: ${buffer.size}, minBuffer: $minBuffer")
 
         while (running) {
+            // Check if recorder is still in a good state
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                Log.e("SoundDetector", "Recorder stopped recording unexpectedly, state: ${recorder.recordingState}")
+                recorder.startRecording()
+                delay(100)
+                continue
+            }
+
             val read = recorder.read(buffer, 0, buffer.size)
-            if (read <= 0) {
+            if (read < 0) {
+                Log.e("SoundDetector", "Read error: $read")
+                delay(50)
+                continue
+            }
+            if (read == 0) {
+                Log.w("SoundDetector", "Read 0 samples")
                 delay(10)
                 continue
             }
@@ -115,9 +134,43 @@ class SoundDetector @Inject constructor(
             val rms = sqrt(sum / read) / 32768.0
             val peakNorm = (peak / 32768.0).coerceAtMost(1.0)
             val rmsF = rms.toFloat()
+            
+            // Detect flatline (all zeros or extremely low values)
+            if (rmsF < 0.0001f && peakNorm < 0.0001) {
+                flatlineCount++
+                if (flatlineCount >= maxFlatlineBeforeRestart) {
+                    Log.w("SoundDetector", "Flatline detected for $flatlineCount frames, restarting recorder")
+                    recorder.stop()
+                    recorder.release()
+                    
+                    // Create a new recorder
+                    recorder = AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        sampleRate,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        minBuffer
+                    )
+                    if (recorder.state == AudioRecord.STATE_INITIALIZED) {
+                        recorder.startRecording()
+                        flatlineCount = 0
+                        Log.d("SoundDetector", "Recorder restarted successfully")
+                    } else {
+                        recorder.release()
+                        Log.e("SoundDetector", "Failed to reinitialize recorder")
+                        running = false
+                        return
+                    }
+                    continue
+                }
+            } else {
+                flatlineCount = 0
+            }
             val ratio = if (rmsF > 0f) (peakNorm / rmsF).toFloat() else 0f
             val threshold = (noiseFloor * thresholdMultiplier).coerceAtLeast(minAbsRms)
             val detected = rmsF > threshold && ratio >= peakRatio
+
+            Log.d("SoundDetector", "RMS: ${"%.4f".format(rmsF)}, Peak: ${"%.4f".format(peakNorm)}, Threshold: ${"%.4f".format(threshold)}, Detected: $detected")
 
             if (!detected) {
                 noiseFloor = (noiseFloor * (1f - noiseAlpha)) + (rmsF * noiseAlpha)
@@ -136,6 +189,7 @@ class SoundDetector @Inject constructor(
                         lastPeak = peakNorm.toFloat(),
                         rms = rmsF,
                         noiseFloor = noiseFloor,
+                        currentRms = rmsF,
                         events = updated
                     )
                 }
@@ -147,10 +201,11 @@ class SoundDetector @Inject constructor(
             }
 
             _state.update { current ->
-                if (detected) current else current.copy(rms = rmsF, noiseFloor = noiseFloor)
+                if (detected) current else current.copy(rms = rmsF, noiseFloor = noiseFloor, currentRms = rmsF)
             }
         }
 
+        Log.d("SoundDetector", "Recording loop ended")
         recorder.stop()
         recorder.release()
     }
