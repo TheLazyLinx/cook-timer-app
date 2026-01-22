@@ -8,12 +8,20 @@ import android.media.SoundPool
 import android.os.PowerManager
 import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SfxPlayer @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext context: Context,
+    private val settingsRepository: SettingsRepository
 ) {
     private val appContext = context.applicationContext
     private val notificationManager = appContext.getSystemService(NotificationManager::class.java)
@@ -37,11 +45,22 @@ class SfxPlayer @Inject constructor(
         soundPool.load(appContext, sfx.resId, 1)
     }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     var enabled: Boolean = true
+        private set
+    
     private var lastPlayAtMs: Long = 0L
     private val minIntervalMs: Long = 70L
     private val perSfxIntervalMs: Long = 140L
     private val lastPlayBySfx: MutableMap<SfxId, Long> = mutableMapOf()
+
+    init {
+        scope.launch {
+            settingsRepository.observeSettings().collectLatest { settings ->
+                enabled = settings.soundEffectsEnabled
+            }
+        }
+    }
 
     fun play(sfx: SfxId) {
         if (!enabled || !canPlayNow()) return
@@ -62,5 +81,10 @@ class SfxPlayer @Inject constructor(
             return false
         }
         return true
+    }
+
+    fun release() {
+        scope.cancel()
+        soundPool.release()
     }
 }

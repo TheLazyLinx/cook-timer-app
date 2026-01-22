@@ -6,17 +6,24 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
+import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
+import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
+import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class RunViewModel @Inject constructor(
     timeProvider: TimeProvider,
     private val presetRepository: PresetRepository,
+    private val settingsRepository: SettingsRepository,
+    private val soundDetector: SoundDetector,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -28,6 +35,9 @@ class RunViewModel @Inject constructor(
     val state: StateFlow<RunState?> = engine.state
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
+
+    private var lastDetectionTimestamp = 0L
+    private val minDetectionIntervalMs = 1000L
 
     fun start() = engine.start()
     fun pause() = engine.pause()
@@ -46,5 +56,73 @@ class RunViewModel @Inject constructor(
                 }
             }
         }
+
+        // Observe settings and sound detection
+        viewModelScope.launch {
+            combine(
+                settingsRepository.observeSettings(),
+                soundDetector.state
+            ) { settings, detectorState ->
+                Pair(settings, detectorState)
+            }.collectLatest { (settings, detectorState) ->
+                // Start/stop sound detection based on settings
+                if (settings.soundDetectionEnabled) {
+                    soundDetector.start()
+                } else {
+                    soundDetector.stop()
+                }
+
+                // Handle sound triggers
+                if (settings.soundDetectionEnabled && 
+                    settings.soundTriggerAction != SoundTriggerAction.NONE &&
+                    detectorState.isLit) {
+                    
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastDetectionTimestamp >= minDetectionIntervalMs) {
+                        lastDetectionTimestamp = currentTime
+                        handleSoundTrigger(settings.soundTriggerAction)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleSoundTrigger(action: SoundTriggerAction) {
+        val currentState = state.value ?: return
+
+        when (action) {
+            SoundTriggerAction.NONE -> {
+                // Do nothing
+            }
+            SoundTriggerAction.START_RESUME -> {
+                when (currentState.phase) {
+                    Phase.READY -> start()
+                    Phase.PAUSED -> resume()
+                    Phase.RUNNING -> { /* Already running */ }
+                    Phase.COMPLETED -> { /* Do nothing */ }
+                }
+            }
+            SoundTriggerAction.PAUSE -> {
+                if (currentState.phase == Phase.RUNNING) {
+                    pause()
+                }
+            }
+            SoundTriggerAction.NEXT_STEP -> {
+                next()
+            }
+            SoundTriggerAction.TOGGLE_PLAY_PAUSE -> {
+                when (currentState.phase) {
+                    Phase.READY -> start()
+                    Phase.RUNNING -> pause()
+                    Phase.PAUSED -> resume()
+                    Phase.COMPLETED -> { /* Do nothing */ }
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        soundDetector.stop()
     }
 }

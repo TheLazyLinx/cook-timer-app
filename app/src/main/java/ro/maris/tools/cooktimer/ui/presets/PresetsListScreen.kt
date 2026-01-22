@@ -52,9 +52,7 @@ import ro.maris.tools.cooktimer.ui.theme.SoftRed
 @Composable
 fun PresetsListScreen(
     vm: PresetsListViewModel,
-    isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit,
-    onSoundTest: () -> Unit,
+    onSettings: () -> Unit,
     onRun: (String) -> Unit,
     onEdit: (String?) -> Unit
 ) {
@@ -74,7 +72,6 @@ fun PresetsListScreen(
         disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
         disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
     )
-    val toggleLabel = if (isDarkTheme) "Switch to Light Mode" else "Switch to Dark Mode"
 
     if (pendingDuplicate != null) {
         AlertDialog(
@@ -223,20 +220,11 @@ fun PresetsListScreen(
             }
             item {
                 Button(
-                    onClick = sfxClick(sfx) { onToggleTheme() },
+                    onClick = sfxClick(sfx) { onSettings() },
                     modifier = Modifier.fillMaxWidth(),
                     colors = accentButtonColors
                 ) {
-                    Text(toggleLabel)
-                }
-            }
-            item {
-                Button(
-                    onClick = sfxClick(sfx) { onSoundTest() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = accentButtonColors
-                ) {
-                    Text("Sound Test")
+                    Text("Settings")
                 }
             }
         }

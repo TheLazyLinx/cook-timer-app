@@ -25,7 +25,8 @@ import kotlin.math.sqrt
 data class SoundDetectionEvent(
     val timestampMs: Long,
     val strength: Float,
-    val peak: Float
+    val peak: Float,
+    val samples: List<Float> = emptyList() // RMS values over time (each 10ms)
 )
 
 data class SoundDetectorState(
@@ -77,6 +78,15 @@ class SoundDetector @Inject constructor(
         return true
     }
 
+    fun stop() {
+        running = false
+        recordJob?.cancel()
+        recordJob = null
+        litJob?.cancel()
+        litJob = null
+        _state.update { SoundDetectorState() }
+    }
+
     private suspend fun runRecorderLoop() {
         val minBuffer = AudioRecord.getMinBufferSize(
             sampleRate,
@@ -100,6 +110,8 @@ class SoundDetector @Inject constructor(
         var noiseFloor = 0.005f
         var flatlineCount = 0
         val maxFlatlineBeforeRestart = 30 // ~3 seconds at 100ms windows
+        val recentSamples = mutableListOf<Float>() // Store recent RMS samples for waveform
+        val maxRecentSamples = 50 // Store last 500ms of data (50 * 10ms)
         recorder.startRecording()
         Log.d("SoundDetector", "Recording started, buffer size: ${buffer.size}, minBuffer: $minBuffer")
 
@@ -172,13 +184,20 @@ class SoundDetector @Inject constructor(
 
             Log.d("SoundDetector", "RMS: ${"%.4f".format(rmsF)}, Peak: ${"%.4f".format(peakNorm)}, Threshold: ${"%.4f".format(threshold)}, Detected: $detected")
 
+            // Store recent samples for waveform visualization
+            recentSamples.add(rmsF)
+            if (recentSamples.size > maxRecentSamples) {
+                recentSamples.removeAt(0)
+            }
+
             if (!detected) {
                 noiseFloor = (noiseFloor * (1f - noiseAlpha)) + (rmsF * noiseAlpha)
             } else {
                 val event = SoundDetectionEvent(
                     timestampMs = SystemClock.elapsedRealtime(),
                     strength = rmsF,
-                    peak = peakNorm.toFloat()
+                    peak = peakNorm.toFloat(),
+                    samples = recentSamples.toList() // Capture the waveform
                 )
                 _state.update { current ->
                     val updated = (listOf(event) + current.events).take(maxEvents)
