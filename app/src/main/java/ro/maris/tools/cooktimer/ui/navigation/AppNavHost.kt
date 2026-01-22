@@ -14,21 +14,25 @@ import ro.maris.tools.cooktimer.ui.presets.PresetsListScreen
 import ro.maris.tools.cooktimer.ui.presets.PresetsListViewModel
 import ro.maris.tools.cooktimer.ui.run.RunScreen
 import ro.maris.tools.cooktimer.ui.run.RunViewModel
+import ro.maris.tools.cooktimer.ui.settings.SettingsScreen
+import ro.maris.tools.cooktimer.ui.settings.SettingsViewModel
 import ro.maris.tools.cooktimer.ui.sound.SoundTestScreen
 import ro.maris.tools.cooktimer.ui.sound.SoundTestViewModel
+import ro.maris.tools.cooktimer.ui.soundwave.SoundwaveScreen
+import ro.maris.tools.cooktimer.ui.soundwave.SoundwaveViewModel
 
 object Routes {
     const val PRESETS = "presets"
     const val EDIT = "edit"
     const val RUN = "run"
     const val SOUND_TEST = "sound_test"
+    const val SETTINGS = "settings"
+    const val SOUNDWAVE = "soundwave"
 }
 
 @Composable
 fun AppNavHost(
-    modifier: Modifier = Modifier,
-    isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit
+    modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
 
@@ -41,9 +45,7 @@ fun AppNavHost(
             val vm: PresetsListViewModel = hiltViewModel()
             PresetsListScreen(
                 vm = vm,
-                isDarkTheme = isDarkTheme,
-                onToggleTheme = onToggleTheme,
-                onSoundTest = { navController.navigate(Routes.SOUND_TEST) },
+                onSettings = { navController.navigate(Routes.SETTINGS) },
                 onRun = { presetId ->
                     navController.navigate("${Routes.RUN}/$presetId") {
                         launchSingleTop = true
@@ -99,6 +101,21 @@ fun AppNavHost(
         composable(Routes.SOUND_TEST) {
             val vm: SoundTestViewModel = hiltViewModel()
             SoundTestScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Routes.SETTINGS) {
+            val vm: SettingsViewModel = hiltViewModel()
+            SettingsScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onSoundwave = { navController.navigate(Routes.SOUNDWAVE) }
+            )
+        }
+        composable(Routes.SOUNDWAVE) {
+            val vm: SoundwaveViewModel = hiltViewModel()
+            SoundwaveScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() }
             )
