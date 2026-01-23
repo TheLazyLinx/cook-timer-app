@@ -1,102 +1,91 @@
-# Sound Detection System (Architecture 2.0)
+# Sound Detection System (Architecture 3.1)
 
 ## Overview
 
-The detection system has evolved from a simple loudness trigger into a sophisticated **Confidence-Based Classifier**. Instead of asking *"Is it loud?"*, it now asks *"How likely is this sound a Snap or Slap versus background noise or speech?"*.
+The detection system is a **Physics-Based Classifier**. It does not just listen for generic "loud noises". It specifically hunts for the acoustic signature of **Kinetic Impacts**—the physics of two surfaces striking each other (skin-on-skin, knuckle-on-wood).
 
-It uses **Spectral Analysis** (FFT) to examine the frequency content of every sound in real-time, filtering out "impostors" like dropping objects, human speech, and frying pan crackles.
+It uses **Spectral Analysis** (FFT) combined with **Temporal Flux Analysis** to distinguish these sharp, transient impacts from the "impostors" of daily life (speech, groans, dropped items, shuffling). It also includes **Hardware Artifact Rejection** to handle audio driver glitches.
 
 ---
 
 ## 1. The Detection Pipeline
 
-### Step A: The Adaptive Noise Gate (The Bouncer)
-Before any analysis happens, the sound must prove it is distinct from the background.
-*   **Acoustic Echo Cancellation (AEC)**: Filters out audio playing from the device itself (alarms, timers, music) so the app doesn't trigger on its own sounds.
-*   **Dynamic Threshold**: `Threshold = NoiseFloor * 2.8`.
-*   **Asymmetric Adaptation**: 
-    *   **Rise (Slow)**: Ignores speech/music so they don't artificially raise the floor.
-    *   **Fall (Moderate)**: Recovers sensitivity during pauses in conversation without "crashing" the floor.
-*   **Anti-Latch**: If a sound stays loud for >2.0 seconds (e.g., turning on a faucet/blender), the system keeps the threshold naturally high to ignore it.
-*   **Warm-Up Phase**: Upon start, the system adapts 50x faster for 0.5s to instantly calibrate to the room.
+### Step A: High-Pass Filter (The Mud Guard)
+Before volume is even measured, the signal passes through a **2000Hz High-Pass Filter**. 
+*   **Rejects**: Vowels, deep voices, door thuds, appliance hums.
+*   **Accepts**: The sharp "crack" of a snap or slap.
 
-### Step B: Event Isolation
-Once a sound crosses the threshold, we check its context.
-*   **100ms Lookback**: We analyze the 100ms *before* the trigger.
-*   **Rejection**: If the "Pre-Event" noise was chaotic (high variance), the trigger is rejected. This filters out "Cascading Noises" (like frying food or shuffling papers) where the "loudest pop" is just part of a clutter.
+### Step B: The Flux Gate (Trigger)
+A sound only triggers the system if:
+1.  **HF Energy**: It has significant energy *above* 2000Hz.
+2.  **Attack**: The volume rises explosively (2x increase) in < 10ms.
+3.  **Isolation**: The 120ms *before* the sound was relatively quiet. (Rejects clicks inside a sentence).
+4.  **Sanity Check**: The pre-event noise level must NOT be absolute zero (Digital Silence). This rejects "Wake-Up Pops" caused by microphone driver restarts.
 
-### Step C: Spectral Analysis (The Fingerprint)
-The system calculates key acoustic metrics for the isolated sound:
-1.  **Duration**: How long did it stay loud? (Snaps < 100ms, Speech > 200ms).
-2.  **Centroid (Hz)**: The "Center of Gravity" of the frequency. (Snaps are High pitch, Knocks are Low pitch).
-3.  **ZCR (Zero Crossing Rate)**: How "hissy" or sharp is the sound?
-4.  **Spectral Tilt (Slope)**: *New in 2.0*. 
-    *   **Speech/Music**: Negative Tilt (Bass heavy, rolls off highs).
-    *   **Snaps/Slaps**: Positive/Flat Tilt (Energy is crisp across the spectrum).
+### Step C: Temporal Shape Checks (The Physics Check)
+2.  **Attack**: The volume rises explosively (2x increase) in < 10ms.
+3.  **Isolation**: The 120ms *before* the sound was relatively quiet. (Rejects clicks inside a sentence).
 
-### Step D: Confidence Scoring
-The sound is compared against multiple **Profiles**. A score (0% to 100%) is calculated based on how close the sound is to the profile's "Ideal Center" for each metric.
+### Step C: Temporal Shape Checks (The Physics Check)
+Once triggered, the system monitors the sound's evolution over time to ensure it behaves like an Impact.
+*   **Sustain Check**: At 60ms, the sound must have decayed by >50%. (Rejects Speech/Screams which sustain energy).
+*   **Early Peak**: The loudest moment must be in the first 60ms. (Rejects "Swells" or "Groans" that ramp up slowly).
+*   **Duration Cap**: Sounds > 200ms are rejected. (Rejects dragging/sliding noises).
 
-**The Trigger logic:**
-*   **Score > 60%**: Valid Match.
-*   **Winner Take All**: The profile with the highest score wins.
+### Step D: Spectral Profiling (The Fingerprint)
+The isolated impact is analyzed for:
+1.  **Centroid (Center of Gravity)**: Must be > 800Hz. (Deep sounds are ignored).
+2.  **ZCR (Texture)**: Must be "noisy" enough (friction), but not *too* noisy (shushing).
+3.  **Tilt (Shape)**: Must be relatively flat. (Speech has a steep bass-heavy tilt).
+
+### Step E: Soft-Plateau Scoring
+The sound is scored against profiles. 
+*   **Plateau**: If metrics fall *anywhere* in the valid range, Score = 100% (1.0).
+*   **Falloff**: Outside the range, the score decays effectively to 0.8 (80%).
+*   **Threshold**: Final Score must exceed **78%**.
 
 ---
 
 ## 2. Recognized Profiles
 
-### 🫰 Snaps (The Precision Triggers)
-Recognizes both crisp snaps and duller "thud" snaps.
-*   **Snap (High)**: >4000Hz. Very crisp. Rejects almost all false positives.
+### 🫰 Snaps
+*   **Snap (High)**: >3500Hz. The crispest snap.
 *   **Snap (Mid)**: 1000-4000Hz. Standard snap.
-*   **Snap (Low)**: 300-1000Hz. Duller snaps. Tightly gated to avoid matching table bumps.
+*   **Snap (Low)**: 800-2500Hz. Thicker snap. *Aggressively filtered to ignore voices*.
 
-### ✋ Slaps (The "Wet" Triggers)
-Designed to handle the variety of hand-to-skin or hand-to-surface sounds.
-*   **Slap (Standard)**: 1000-5000Hz. Balanced slap.
-*   **Slap (Wet)**: 150-1500Hz. Heavy, tonal thud. Allows deeper bass (Tilt -30).
-*   **Slap (Airy)**: 3000-10000Hz. Light, glancing contact. High ZCR.
+### ✋ Slaps
+*   **Slap (Standard)**: 1000-5000Hz. skin-on-skin.
+*   **Slap (Wet)**: 400-1500Hz. Heavy impact.
+*   **Slap (Airy)**: 3000-10000Hz. Glancing contact. *Requires >50ms duration to ignore tongue clicks*.
 
 ### 🚪 Knocks
-*   **Knock**: 50-3000Hz. Very short duration, very low ZCR.
+*   **Knock**: 50-3000Hz. Hard surface impact.
+    *   **Max Tilt**: -5f. (Rejects "bright" clicks like pens or plastic snaps that have flat spectra).
 
 ---
 
-## 3. False Positive Rejection Strategies
+## 3. False Positive Rejection Matrix
 
-| Issue | Strategy |
+| Impostor | Why It fails |
 | :--- | :--- |
-| **Speech** | **Spectral Tilt Filter**. Speech has a localized frequency slope. Snaps are broadband impulses. |
-| **Frying Pan** | **100ms Lookback**. "Crackles" are rarely isolated. If the pre-history is noisy, the event is ignored. |
-| **Blenders** | **Anti-Latch**. Continuous loud noise forces the threshold up after 2 seconds. |
-| **Drifting Noise** | **Asymmetric Gate**. The noise floor drops slowly enough to bridge gaps between words/beats. |
-| **Soft Snaps** | **Dynamic Sensitivity**. In quiet rooms (< 0.0025 RMS), thresholds automatically lower to catch faint sounds. |
+| **Speech ("Hey")** | **Sustain Check**. Vowels last > 100ms. |
+| **Clicks ("T"/"K")** | **Flux Gate**. Detected as clutter due to preceding syllable energy. |
+| **Groans/Sighs** | **Late Peak Check**. Air blows ramp up slowly. Snaps peak instantly. |
+| **Mic Pops** | **High-Pass Filter**. Most pop energy is < 300Hz. |
+| **Table Bumps** | **Centroid**. Too deep (< 400Hz). |
+| **Shuffling** | **Attack Threshold**. Rises too slowly. |
+| **Audio Glitch** | **Sanity Check**. Detected via Digital Silence (0.0) history. |
 
 ---
 
-## 4. Debugging & Tuning
+## 4. Tuning Guide
 
-### The Log Format
-Use Logcat filtered by `tag:SoundAnalysis` to see the decision matrix:
-`Type, Confidence, Duration, RMS, Peak, ZCR, Centroid, Tilt, Isolation Score`
+### Key Constants
+*   `confidenceThreshold`: **0.78** (78%)
+*   `thresholdMultiplier`: **4.0x** (Signal-to-Noise)
+*   `attackThreshold`: **2.0x** (Rise Ratio)
+*   `noiseAlphaFall`: **0.05** (Quick Recovery from loud events)
 
-### Tuning Guide
-*   **If "Rejected: Isolation"**: The environment is too cluttered.
-*   **If "Rejected: Low Confidence"**: Check which metric failed.
-    *   *Duration too high?* -> Likely handling noise.
-    *   *Tilt too negative?* -> Likely speech or a dull object impact.
-
-## Soundwave Visualization Screen
-(Legacy components updated for new architecture)
-- **Status**: Now shows "Confidence %" instead of just Pass/Fail.
-- **Waveform**: Helpful for seeing the Isolation Ratio (Is the flat line before the spike truly flat?).
-- **Clap/Knock**: -10 to 0 dB or higher
-- **Noise floor**: Usually -35 to -25 dB depending on environment
-
-### Tips for Best Results
-
-- **Quiet Environment**: Test in a room with minimal background noise
-- **Consistent Sounds**: Make similar claps/knocks to verify consistent detection
-- **Distance**: Test from your typical usage distance (e.g., arm's length from device)
-- **Review History**: Look for patterns in successful vs failed detections
-- **Adjust Expectations**: Very soft sounds or continuous noise won't trigger detection by design
+### Troubleshooting
+*   **Missed Snaps**: Ensure snap is sharp. Muffled/cloth snaps are filtered.
+*   **False Trigger**: Check "Isolation" score. Noisy rooms raise the bar automatically.

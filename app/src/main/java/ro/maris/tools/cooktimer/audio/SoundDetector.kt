@@ -65,19 +65,15 @@ class SoundDetector @Inject constructor(
     
     // Dynamic Thresholds
     // Lowered back down - 0.025 was obstructing -30dB slaps (~0.032).
-    private val baseMinRms = 0.018f 
-    private val quietModeMinRms = 0.012f 
-    private val thresholdMultiplier = 2.8f // Reduced from 3.5 to rely more on Profile Validation than raw volume
-    // Asymmetric Learning:
+    private val baseMinRms = 0.035f 
+    private val quietModeMinRms = 0.025f 
+    private val thresholdMultiplier = 4.0f 
     // Rise Slow (0.005) to avoid learning speech/music as noise.
-    // Fall Moderate (0.015) - previously 0.05 was too fast.
-    // We don't want the floor to crash during a 200ms gap in speech, 
-    // because that makes the next word trigger a huge "Relative Spike".
     private val noiseAlphaRise = 0.005f 
-    private val noiseAlphaFall = 0.015f 
-    private val maxEvents = 20
-    private val confidenceThreshold = 0.60f
-    private val rangeTolerance = 1.8f
+    private val noiseAlphaFall = 0.050f // Increased fall speed to recover faster from "Snap Sprees"
+    private val maxEvents = 50 // Increased history size
+    private val confidenceThreshold = 0.78f // Raised from 0.75 to 0.78 to cut marginal Speech FPs (like the 76% one)
+    private val rangeTolerance = 1.6f // Tightened from 1.8 to force stricter adherence to profile shapes
     
     // Profiles
     data class SoundProfile(
@@ -96,39 +92,70 @@ class SoundDetector @Inject constructor(
         // Notes on Tilt:
         // Snaps have flat or rising spectra (Tilt > -10). Space/Voice drops off (Tilt < -20).
         // Enforcing minTilt excludes speech and dull impacts.
-        SoundProfile("Snap (High)", minDurMs = 10, maxDurMs = 110, minZcr = 0.3f, maxZcr = 0.99f, minCentroid = 4000f, maxCentroid = 12000f, minTilt = -5f),
-        SoundProfile("Snap (Mid)", minDurMs = 10, maxDurMs = 120, minZcr = 0.1f, maxZcr = 0.8f, minCentroid = 1000f, maxCentroid = 4000f, minTilt = -12f),
-        SoundProfile("Snap (Low)", minDurMs = 10, maxDurMs = 140, minZcr = 0.03f, maxZcr = 0.5f, minCentroid = 300f, maxCentroid = 1000f, minTilt = -20f),
         
-        // Slaps - Split into Tonal (Wet), Standard, and Airy
-        SoundProfile("Slap", minDurMs = 15, maxDurMs = 400, minZcr = 0.05f, maxZcr = 0.60f, minCentroid = 1000f, maxCentroid = 5000f, minTilt = -15f),
-        SoundProfile("Slap (Wet)", minDurMs = 20, maxDurMs = 450, minZcr = 0.01f, maxZcr = 0.40f, minCentroid = 150f, maxCentroid = 1500f, minTilt = -30f), // Allow more bass
-        SoundProfile("Slap (Airy)", minDurMs = 10, maxDurMs = 350, minZcr = 0.20f, maxZcr = 0.80f, minCentroid = 3000f, maxCentroid = 10000f, minTilt = -10f),
+        // 1. SNAP HIGH - Adjusted to catch the 4400Hz snaps the user was seeing
+        // Lowered minCentroid (4000->3500) because 4404Hz was on the edge.
+        // Relaxed maxDur (110->130) because reverb/tail was making snaps appear as 90ms-100ms.
+        SoundProfile("Snap (High)", minDurMs = 45, maxDurMs = 130, minZcr = 0.3f, maxZcr = 0.99f, minCentroid = 3500f, maxCentroid = 12000f, minTilt = -5f),
         
-        SoundProfile("Knock", minDurMs = 15, maxDurMs = 120, minZcr = 0.0f, maxZcr = 0.3f, minCentroid = 50f, maxCentroid = 3000f, minTilt = -25f),
-        SoundProfile("Stomp", minDurMs = 40, maxDurMs = 300, minZcr = 0.0f, maxZcr = 0.15f, minCentroid = 20f, maxCentroid = 1000f)
+        // 2. SNAP MID - Standard snap
+        SoundProfile("Snap (Mid)", minDurMs = 45, maxDurMs = 130, minZcr = 0.1f, maxZcr = 0.8f, minCentroid = 1000f, maxCentroid = 4000f, minTilt = -12f),
+        
+        // 3. SNAP LOW - Killer settings
+        SoundProfile("Snap (Low)", minDurMs = 45, maxDurMs = 80, minZcr = 0.08f, maxZcr = 0.5f, minCentroid = 800f, maxCentroid = 2500f, minTilt = -10f), 
+        
+        // 4. SLAP (AIRY) - The culprit for speech FPs
+        // Raised minDur (10->45ms) so short clicks/snaps don't match this.
+        // Raised minZcr (0.2->0.4) because speech "bla" is rarely 40% noise, but air friction is.
+        SoundProfile("Slap (Airy)", minDurMs = 50, maxDurMs = 200, minZcr = 0.40f, maxZcr = 0.90f, minCentroid = 3000f, maxCentroid = 10000f, minTilt = -8f),
+
+        // 5. SLAP STANDARD
+        SoundProfile("Slap", minDurMs = 25, maxDurMs = 200, minZcr = 0.05f, maxZcr = 0.60f, minCentroid = 1000f, maxCentroid = 5000f, minTilt = -10f),
+        
+        // 6. SLAP WET (Bass)
+        SoundProfile("Slap (Wet)", minDurMs = 30, maxDurMs = 180, minZcr = 0.04f, maxZcr = 0.40f, minCentroid = 400f, maxCentroid = 1500f, minTilt = -18f), 
+        
+        // 7. KNOCK
+        // Enforce maxTilt = -5f to ensure it's a "thud" (bass-heavy) and not a flat "click" or "snap" (-1.19).
+        SoundProfile("Knock", minDurMs = 15, maxDurMs = 120, minZcr = 0.0f, maxZcr = 0.3f, minCentroid = 50f, maxCentroid = 3000f, minTilt = -25f, maxTilt = -5f)
     )
 
-    private val attackThreshold = 1.4f
+    private val attackThreshold = 2.0f // Increased from 1.4 to 2.0 to reject soft onsets (groans/sighs)
 
     private fun getMetricScore(value: Float, min: Float, max: Float): Float {
-        val center = (min + max) / 2f
-        val range = max - min
-        val halfRange = range / 2f
+        // Soft-Plateau Scoring:
+        // Center of range = 1.0
+        // Edges of range = 0.8 (Not 1.0, to prevent "barely-in" 100% scores)
+        // Outside range = Rapid decay
         
-        // Calculate raw distance from center
-        val dist = abs(value - center)
-        
-        // Normalize by the "tolerant" range (wider than the strict min/max)
-        // If rangeTolerance is 2.0, then a value exactly at min/max gets 0.5 score
-        // Score = 1.0 at center
-        // Score = 0.0 at (center +/- halfRange * tolerance)
-        val maxDist = halfRange * rangeTolerance
-        
-        if (maxDist <= 0.0001f) return if (dist < 0.0001f) 1f else 0f
+        if (value >= min && value <= max) {
+            val range = max - min
+            if (range < 0.001f) return 1.0f
             
-        val score = 1.0f - (dist / maxDist)
-        return score.coerceIn(0f, 1f)
+            // 0.0 (min) -> 0.5 (center) -> 1.0 (max)
+            val relative = (value - min) / range
+            val distFromCenter = abs(relative - 0.5f) // 0.0 to 0.5
+            
+            // Map 0.0..0.5 difficulty to 1.0..0.8 score
+            // 0.0 -> 1.0
+            // 0.5 -> 0.8
+            return 1.0f - (distFromCenter * 0.4f)
+        }
+        
+        val range = max - min
+        
+        // Outside range: Start from 0.8 and decay
+        val allowedDeviation = range * 0.5f // Generous falloff
+        
+        if (allowedDeviation < 0.0001f) return 0f
+            
+        val dist = if (value < min) min - value else value - max
+        val penalty = dist / allowedDeviation // 0 to 1
+        
+        // Start at 0.8 check
+        val score = 0.8f - (penalty * 0.8f)
+        
+        return score.coerceIn(0f, 0.8f)
     }
 
     private var running = false
@@ -202,7 +229,7 @@ class SoundDetector @Inject constructor(
         val buffer = ShortArray(windowSamples)
         var noiseFloor = 0.005f
         var flatlineCount = 0
-        val maxFlatlineBeforeRestart = 300 // ~3 seconds at 10ms windows
+        val maxFlatlineBeforeRestart = 100 // Reduced to ~1 second to catch dropouts faster
         
         // Data Normalization (Warm-up)
         // We start with a high "learning rate" to quickly snap to the room's noise level
@@ -210,9 +237,17 @@ class SoundDetector @Inject constructor(
         var warmUpFrames = 50 // 500ms
         val fastNoiseAlpha = 0.25f // Very fast adaptation during warmup
         
+        // HPF State (Simple 1st Order) for ~2000Hz cutoff at 16000Hz sample rate
+        // RC = 1/(2*pi*2000) = 7.95e-5
+        // dt = 1/16000 = 6.25e-5
+        // alpha = RC / (RC + dt) = 0.56
+        val hpfAlpha = 0.56f
+        var hpfPrevIn = 0f
+        var hpfPrevOut = 0f
+        
         // History for UI and Analysis
         val recentSamples = mutableListOf<Float>() 
-        val maxRecentSamples = 50 // 500ms history
+        val maxRecentSamples = 150 // Increased to 1.5s history to Bridge Speech Gaps
         
         // Event Monitoring State
         var isMonitoringEvent = false
@@ -259,6 +294,7 @@ class SoundDetector @Inject constructor(
             val dcOffset = (dcSum / read).toInt() // integer mean
             
             var sum = 0.0
+            var hpfSum = 0.0
             var peak = 0.0
             var zeroCrossings = 0
             val floatBuffer = FloatArray(read)
@@ -270,6 +306,12 @@ class SoundDetector @Inject constructor(
                 if (absV > peak) peak = absV.toDouble()
                 sum += v * v
                 
+                // High Pass Filter (2000Hz)
+                val hpfOut = hpfAlpha * (hpfPrevOut + v - hpfPrevIn)
+                hpfPrevIn = v
+                hpfPrevOut = hpfOut
+                hpfSum += hpfOut * hpfOut
+                
                 // ZCR check on DC-removed signal
                 if (i > 0) {
                     val prev = floatBuffer[i-1]
@@ -280,8 +322,10 @@ class SoundDetector @Inject constructor(
             }
             
             val rms = sqrt(sum / read) / 32768.0
+            val hpfRms = sqrt(hpfSum / read) / 32768.0
             val peakNorm = (peak / 32768.0).coerceAtMost(1.0)
             val rmsF = rms.toFloat()
+            val hpfRmsF = hpfRms.toFloat()
             val zcr = zeroCrossings.toFloat() / read.coerceAtLeast(1)
             
             // Calculate Spectral Features
@@ -315,6 +359,9 @@ class SoundDetector @Inject constructor(
                             Log.e("SoundDetector", "Error recreating AEC", e)
                         }
                         flatlineCount = 0
+                        warmUpFrames = 50 // Reset warm-up to silence the "pop" of restarting and recalibrate noise floor
+                        recentSamples.clear() // Clear dead history so it doesn't skew statistics
+                        continue
                     } else {
                         running = false
                         aec?.release()
@@ -383,6 +430,27 @@ class SoundDetector @Inject constructor(
                         framesSincePeak++
                     }
                     if (peakNorm > eventPeakRaw) eventPeakRaw = peakNorm.toFloat()
+                    
+                    // Sustain/Flux Check (User Requirement)
+                    // Check at T+50ms or T+60ms
+                    // If energy is still > 50% of peak, it's likely speech (vowel sustain) or noise.
+                    // Snaps and Slaps are transient and should have decayed significantly by 50ms.
+                    if (eventHighRmsFrames == 5 || eventHighRmsFrames == 6) {
+                        val ratio = if (eventPeakRms > 0) rmsF / eventPeakRms else 0f
+                        if (ratio > 0.5f) {
+                            Log.d("SoundDetector", "Rejected: Sustained/Speech (Ratio $ratio at ${eventHighRmsFrames*10}ms)")
+                            isMonitoringEvent = false
+                        }
+                    }
+
+                    // Peak Late Check (Groan Rejection)
+                    // If the peak happened > 60ms into the event, it's a swell/crescendo (impulse peaking is instant).
+                    // Exception: Very long events might have multiple peaks, but we assume impulse snaps peak early.
+                    val framesAtPeak = eventHighRmsFrames - framesSincePeak
+                    if (framesAtPeak > 6 && rmsF > threshold * 2.0f) { // Only strict on loud sounds
+                          Log.d("SoundDetector", "Rejected: Slow Intensity Rise (Peak at ${framesAtPeak*10}ms)")
+                          isMonitoringEvent = false
+                    }
                     
                     // Double-Peak / Rebound Check
                     // If we dipped significantly below peak, we shouldn't rise again significantly
@@ -456,17 +524,27 @@ class SoundDetector @Inject constructor(
                     
                     // 3. Pre-Event Isolation Check (Global for all profiles)
                     if (isValid) {
-                        val preEventRatio = if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f
-                        
-                        // Dynamic Isolation Threshold
-                        // Smooth transition: Quiet sounds tolerate 0.6 noise ratio. Loud sounds (>0.2) tighten to 0.25.
-                        // This prevents the "Dead Zone" where a medium snap fails because it's slightly too loud for the easy check.
-                        val allowedRatio = (0.65f - (eventPeakRms * 2.5f)).coerceIn(0.25f, 0.65f)
-                        
-                        if (preEventRatio > allowedRatio) {
-                            rejectionReason = "Isolation/PreNoise: ${"%.2f".format(preEventRatio)} > ${"%.2f".format(allowedRatio)}"
-                            Log.d("SoundDetector", "Rejected: $rejectionReason")
-                            isValid = false
+                        // SANITY CHECK: "Digital Silence" or "Wake Up" Artifacts
+                        // If the sound PRIOR to the event was absolute zero (0.0), it means the microphone
+                        // wasn't delivering data (lag/mute/emulator bug). A real room is never 0.0.
+                        // We reject this because we can't measure isolation against 0.0.
+                        if (preEventNoiseAvg < 0.00001f) {
+                             rejectionReason = "Artifact: Wake-up pop (Pre-noise is digital silence)"
+                             Log.d("SoundDetector", "Rejected: $rejectionReason")
+                             isValid = false
+                        } else {
+                            val preEventRatio = if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f
+                            
+                            // Dynamic Isolation Threshold
+                            // Smooth transition: Quiet sounds tolerate 0.6 noise ratio. Loud sounds (>0.2) tighten to 0.25.
+                            // This prevents the "Dead Zone" where a medium snap fails because it's slightly too loud for the easy check.
+                            val allowedRatio = (0.65f - (eventPeakRms * 2.5f)).coerceIn(0.25f, 0.65f)
+                            
+                            if (preEventRatio > allowedRatio) {
+                                rejectionReason = "Isolation/PreNoise: ${"%.2f".format(preEventRatio)} > ${"%.2f".format(allowedRatio)}"
+                                Log.d("SoundDetector", "Rejected: $rejectionReason")
+                                isValid = false
+                            }
                         }
                     }
 
@@ -522,12 +600,23 @@ class SoundDetector @Inject constructor(
                 }
             } else {
                 // IDLE - Check for trigger
-                if (rmsF > threshold) {
+                // We use HPF RMS for the primary trigger to ignore low-frequency speech mud.
+                // However, we must allow "Broadband" triggers if they are potential Knocks (Very low ZCR).
+                // Or we effectively say "Snap/Slap detection requires HF energy".
+                // Given the user issues, we will prioritize HF triggering.
+                
+                val primaryTrigger = hpfRmsF > threshold
+                val broadbandTrigger = rmsF > threshold
+                
+                // Flux Gate: Only allow broadband trigger if it has decent HF content 
+                // OR if it looks like a Knock (Low ZCR check is hard on single frame, but we can check if hpf isn't ZERO)
+                
+                if (primaryTrigger || (broadbandTrigger && hpfRmsF > rmsF * 0.25f)) {
                     // LOUDNESS CHECK PASSED
                     
                     // ATTACK CHECK: Check if rise was sudden
                     val baseline = if (prevRms > noiseFloor) prevRms else noiseFloor
-                    val riseRatio = rmsF / baseline.coerceAtLeast(0.001f)
+                    val riseRatio = rmsF / baseline.coerceAtLeast(0.001f) // Use full RMS for attack ratio to capture full onset
                     
                     if (riseRatio > attackThreshold) {
                          // Start Monitoring
@@ -543,16 +632,20 @@ class SoundDetector @Inject constructor(
                         hasDippedFromPeak = false
                         
                         // Capture pre-event noise level
-                        // Increased lookback to 100ms (10 frames) to better capture "busy" environments
-                        // This helps reject "Cascade" noises (frying pan, shuffling) where the previous 30ms might be a gap,
-                        // but the last 100ms contains plenty of noise energy.
-                        val lookback = 10
+                        // Reverted deep lookback to 120ms to keep it snappy.
+                        // We will rely on stricter spectral profiling (Tilt/Centroid) to kill speech.
+                        val lookback = 12
                         val available = recentSamples.size
+                        
+                        // We skip the immediate 3 frames (30ms) before the event to ignore the "Silence before the Storm"
+                        val gapFrames = 3 
+                        
                         var noiseSum = 0f
                         var count = 0
-                        for (j in 0 until lookback) {
+                        for (j in gapFrames until lookback) {
                            if (available - 1 - j >= 0) {
-                               noiseSum += recentSamples[available - 1 - j]
+                               val s = recentSamples[available - 1 - j]
+                               noiseSum += s
                                count++
                            }
                         }

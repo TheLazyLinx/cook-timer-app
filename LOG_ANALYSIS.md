@@ -25,7 +25,7 @@ The log output follows this format:
 | **6** | **Centroid** | Spectral Centroid (Hz) | "Center of Gravity" of the frequency. **Snaps:** High (>2500Hz). |
 | **7** | **Tilt** | Spectral Slope | Slope of frequency drop-off. **Snaps:** Positive/Flat. **Noise:** Negative. |
 | **8** | **Isolation** | Pre-Noise / Event-RMS Ratio | How "sudden" the sound was. Lower is better. < 0.5 is ideal. |
-| **9** | **Reason** | Text Description | Why the event was rejected (if applicable). |
+| **9** | **Reason** | Text Description | Why the event was rejected (if applicable). Includes "Artifact" for wakes. |
 
 ## Optimization Strategy
 
