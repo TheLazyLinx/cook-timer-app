@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +30,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val SOUND_EFFECTS_ENABLED = booleanPreferencesKey("sound_effects_enabled")
         val SOUND_DETECTION_ENABLED = booleanPreferencesKey("sound_detection_enabled")
         val SOUND_TRIGGER_ACTION = stringPreferencesKey("sound_trigger_action")
+        val ALLOWED_SOUND_PROFILES = stringSetPreferencesKey("allowed_sound_profiles")
         val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 
@@ -40,6 +42,8 @@ class DataStoreSettingsRepository @Inject constructor(
                 soundTriggerAction = preferences[Keys.SOUND_TRIGGER_ACTION]
                     ?.let { runCatching { SoundTriggerAction.valueOf(it) }.getOrNull() }
                     ?: SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+                allowedSoundProfiles = preferences[Keys.ALLOWED_SOUND_PROFILES]
+                    ?: setOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap", "Knock", "Stomp"),
                 themeMode = preferences[Keys.THEME_MODE]
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
                     ?: ThemeMode.SYSTEM
@@ -66,6 +70,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setSoundTriggerAction(action: SoundTriggerAction) {
         context.dataStore.edit { preferences ->
             preferences[Keys.SOUND_TRIGGER_ACTION] = action.name
+        }
+    }
+
+    override suspend fun setAllowedSoundProfiles(profiles: Set<String>) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.ALLOWED_SOUND_PROFILES] = profiles
         }
     }
 

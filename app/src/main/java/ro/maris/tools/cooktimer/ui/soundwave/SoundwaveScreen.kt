@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,14 +29,17 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
 import kotlin.math.ln
 
@@ -47,6 +51,8 @@ fun SoundwaveScreen(
 ) {
     val detectorState by vm.detectorState.collectAsState()
     val selectedEvent by vm.selectedEvent.collectAsState()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -109,176 +115,212 @@ fun SoundwaveScreen(
                 }
             }
 
-            // Detection events over time graph OR selected event detail
-            if (selectedEvent != null) {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Detection Detail",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            androidx.compose.material3.TextButton(onClick = { vm.selectEvent(null) }) {
-                                Text("Back to Overview")
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    // Detection events over time graph OR selected event detail
+                    if (selectedEvent != null) {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Detection Detail",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    androidx.compose.material3.TextButton(onClick = { vm.selectEvent(null) }) {
+                                        Text("Back to Overview")
+                                    }
+                                }
+                                
+                                Text(
+                                    text = "Sound Wave - ${selectedEvent!!.samples.size * 10}ms capture",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                
+                                DetectionWaveformGraph(
+                                    event = selectedEvent!!,
+                                    noiseFloor = detectorState.noiseFloor,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(300.dp)
+                                )
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Strength: ${"%.4f".format(selectedEvent!!.strength)}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = "Confidence: ${(selectedEvent!!.confidence * 100).toInt()}%",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = "${"%.1f".format(rmsToDb(selectedEvent!!.strength))} dB",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Text(
+                                            text = "${"%.1f".format(rmsToDb(selectedEvent!!.peak))} dB",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
                             }
                         }
-                        
-                        Text(
-                            text = "Sound Wave - ${selectedEvent!!.samples.size * 10}ms capture",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        
-                        DetectionWaveformGraph(
-                            event = selectedEvent!!,
-                            noiseFloor = detectorState.noiseFloor,
+                    } else {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(300.dp)
-                        )
-                        
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column {
-                                Text(
-                                    text = "Strength: ${"%.4f".format(selectedEvent!!.strength)}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = "Peak: ${"%.4f".format(selectedEvent!!.peak)}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = "${"%.1f".format(rmsToDb(selectedEvent!!.strength))} dB",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = "${"%.1f".format(rmsToDb(selectedEvent!!.peak))} dB",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                }
-            } else {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Detection Events Over Time",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    
-                    Text(
-                        text = "dB vs Time (milliseconds)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
-                    DetectionTimelineGraph(
-                        events = detectorState.events,
-                        noiseFloor = detectorState.noiseFloor,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(250.dp)
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Events: ${detectorState.events.size}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            text = "Noise: %.1f dB".format(rmsToDb(detectorState.noiseFloor)),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-            
-            // Current amplitude indicator
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Current Level",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
                             Text(
-                                text = "RMS: %.3f".format(detectorState.currentRms),
-                                style = MaterialTheme.typography.bodyMedium
+                                text = "Detection Events Over Time",
+                                style = MaterialTheme.typography.titleMedium
                             )
+                            
                             Text(
-                                text = "dB: %.1f".format(rmsToDb(detectorState.currentRms)),
+                                text = "dB vs Time (milliseconds)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = "Last Strength: %.3f".format(detectorState.lastStrength),
-                                style = MaterialTheme.typography.bodyMedium
+                            
+                            DetectionTimelineGraph(
+                                events = detectorState.events,
+                                noiseFloor = detectorState.noiseFloor,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(250.dp)
                             )
-                            Text(
-                                text = "Peak: %.3f".format(detectorState.lastPeak),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Events: ${detectorState.events.size}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "Noise: %.1f dB".format(rmsToDb(detectorState.noiseFloor)),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                     }
+                    
+                    // Current amplitude indicator
+                    Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Current Level & Debug",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            
+                            if (detectorState.lastRejectionReason != null) {
+                                Text(
+                                    text = "Rejection: ${detectorState.lastRejectionReason}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            
+                            if (detectorState.debugInfo.isNotEmpty()) {
+                                Text(
+                                    text = "Last: ${detectorState.debugInfo}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "RMS: %.3f".format(detectorState.currentRms),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "dB: %.1f".format(rmsToDb(detectorState.currentRms)),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = "Last Strength: %.3f".format(detectorState.lastStrength),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Peak: %.3f".format(detectorState.lastPeak),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    }
                 }
-            }
 
-            // Recent detections list
-            Text(
-                text = "Recent Detections",
-                style = MaterialTheme.typography.titleMedium
-            )
-            
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Recent Detections",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        androidx.compose.material3.TextButton(onClick = { vm.clearHistory() }) {
+                            Text("Clear")
+                        }
+                    }
+                }
+
                 items(detectorState.events) { event ->
                     DetectionCard(
                         event = event,
-                        onClick = { vm.selectEvent(event) }
+                        onClick = { 
+                            vm.selectEvent(event)
+                            scope.launch {
+                                listState.animateScrollToItem(0)
+                            }
+                        }
                     )
                 }
             }
         }
     }
-}
 }
 
 @Composable
@@ -522,7 +564,7 @@ private fun DetectionCard(event: SoundDetectionEvent, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Time: ${event.timestampMs} ms",
+                    text = "Duration: ${event.durationMs} ms",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
@@ -543,9 +585,10 @@ private fun DetectionCard(event: SoundDetectionEvent, onClick: () -> Unit) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "Peak: ${"%.4f".format(event.peak)}",
+                        text = "Conf: ${(event.confidence * 100).toInt()}%",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Column(

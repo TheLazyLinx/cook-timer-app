@@ -1,103 +1,95 @@
-# Sound Detection System
+# Sound Detection System (Architecture 2.0)
 
-## How Detection Works
+## Overview
 
-The sound detection system uses real-time audio analysis to detect sudden, loud sounds like claps or knocks.
+The detection system has evolved from a simple loudness trigger into a sophisticated **Confidence-Based Classifier**. Instead of asking *"Is it loud?"*, it now asks *"How likely is this sound a Snap or Slap versus background noise or speech?"*.
 
-### Detection Algorithm
+It uses **Spectral Analysis** (FFT) to examine the frequency content of every sound in real-time, filtering out "impostors" like dropping objects, human speech, and frying pan crackles.
 
-1. **Audio Sampling**: Records audio at 16 kHz using the device microphone
-2. **Window Analysis**: Processes audio in 100ms windows (~1600 samples per window)
-3. **RMS Calculation**: Computes Root Mean Square (RMS) amplitude for each window
-4. **Peak Detection**: Identifies the maximum amplitude within each window
-5. **Adaptive Threshold**: Maintains a dynamic noise floor that adapts to ambient sound
-6. **Detection Criteria**: A sound is detected when:
-   - RMS amplitude > (noise floor × 3.5)
-   - RMS amplitude > 0.02 (minimum absolute threshold)
-   - Peak-to-RMS ratio ≥ 2.0 (ensures sudden, sharp sounds)
+---
 
-### Key Parameters
+## 1. The Detection Pipeline
 
-- **Sample Rate**: 16,000 Hz
-- **Window Size**: 100ms (1600 samples)
-- **Noise Floor Alpha**: 0.05 (learning rate for adaptive threshold)
-- **Threshold Multiplier**: 3.5× above noise floor
-- **Minimum RMS**: 0.02 (prevents false triggers on silence)
-- **Peak Ratio**: 2.0 (peak must be 2× the RMS for detection)
+### Step A: The Adaptive Noise Gate (The Bouncer)
+Before any analysis happens, the sound must prove it is distinct from the background.
+*   **Acoustic Echo Cancellation (AEC)**: Filters out audio playing from the device itself (alarms, timers, music) so the app doesn't trigger on its own sounds.
+*   **Dynamic Threshold**: `Threshold = NoiseFloor * 2.8`.
+*   **Asymmetric Adaptation**: 
+    *   **Rise (Slow)**: Ignores speech/music so they don't artificially raise the floor.
+    *   **Fall (Moderate)**: Recovers sensitivity during pauses in conversation without "crashing" the floor.
+*   **Anti-Latch**: If a sound stays loud for >2.0 seconds (e.g., turning on a faucet/blender), the system keeps the threshold naturally high to ignore it.
+*   **Warm-Up Phase**: Upon start, the system adapts 50x faster for 0.5s to instantly calibrate to the room.
 
-### Waveform Capture
+### Step B: Event Isolation
+Once a sound crosses the threshold, we check its context.
+*   **100ms Lookback**: We analyze the 100ms *before* the trigger.
+*   **Rejection**: If the "Pre-Event" noise was chaotic (high variance), the trigger is rejected. This filters out "Cascading Noises" (like frying food or shuffling papers) where the "loudest pop" is just part of a clutter.
 
-Each detection event captures:
-- **Timestamp**: System time in milliseconds (using `SystemClock.elapsedRealtime()`)
-- **Strength**: The RMS amplitude at detection
-- **Peak**: The maximum amplitude at detection
-- **Samples**: Up to 500ms of RMS history (50 samples at 10ms intervals)
+### Step C: Spectral Analysis (The Fingerprint)
+The system calculates key acoustic metrics for the isolated sound:
+1.  **Duration**: How long did it stay loud? (Snaps < 100ms, Speech > 200ms).
+2.  **Centroid (Hz)**: The "Center of Gravity" of the frequency. (Snaps are High pitch, Knocks are Low pitch).
+3.  **ZCR (Zero Crossing Rate)**: How "hissy" or sharp is the sound?
+4.  **Spectral Tilt (Slope)**: *New in 2.0*. 
+    *   **Speech/Music**: Negative Tilt (Bass heavy, rolls off highs).
+    *   **Snaps/Slaps**: Positive/Flat Tilt (Energy is crisp across the spectrum).
+
+### Step D: Confidence Scoring
+The sound is compared against multiple **Profiles**. A score (0% to 100%) is calculated based on how close the sound is to the profile's "Ideal Center" for each metric.
+
+**The Trigger logic:**
+*   **Score > 60%**: Valid Match.
+*   **Winner Take All**: The profile with the highest score wins.
+
+---
+
+## 2. Recognized Profiles
+
+### 🫰 Snaps (The Precision Triggers)
+Recognizes both crisp snaps and duller "thud" snaps.
+*   **Snap (High)**: >4000Hz. Very crisp. Rejects almost all false positives.
+*   **Snap (Mid)**: 1000-4000Hz. Standard snap.
+*   **Snap (Low)**: 300-1000Hz. Duller snaps. Tightly gated to avoid matching table bumps.
+
+### ✋ Slaps (The "Wet" Triggers)
+Designed to handle the variety of hand-to-skin or hand-to-surface sounds.
+*   **Slap (Standard)**: 1000-5000Hz. Balanced slap.
+*   **Slap (Wet)**: 150-1500Hz. Heavy, tonal thud. Allows deeper bass (Tilt -30).
+*   **Slap (Airy)**: 3000-10000Hz. Light, glancing contact. High ZCR.
+
+### 🚪 Knocks
+*   **Knock**: 50-3000Hz. Very short duration, very low ZCR.
+
+---
+
+## 3. False Positive Rejection Strategies
+
+| Issue | Strategy |
+| :--- | :--- |
+| **Speech** | **Spectral Tilt Filter**. Speech has a localized frequency slope. Snaps are broadband impulses. |
+| **Frying Pan** | **100ms Lookback**. "Crackles" are rarely isolated. If the pre-history is noisy, the event is ignored. |
+| **Blenders** | **Anti-Latch**. Continuous loud noise forces the threshold up after 2 seconds. |
+| **Drifting Noise** | **Asymmetric Gate**. The noise floor drops slowly enough to bridge gaps between words/beats. |
+| **Soft Snaps** | **Dynamic Sensitivity**. In quiet rooms (< 0.0025 RMS), thresholds automatically lower to catch faint sounds. |
+
+---
+
+## 4. Debugging & Tuning
+
+### The Log Format
+Use Logcat filtered by `tag:SoundAnalysis` to see the decision matrix:
+`Type, Confidence, Duration, RMS, Peak, ZCR, Centroid, Tilt, Isolation Score`
+
+### Tuning Guide
+*   **If "Rejected: Isolation"**: The environment is too cluttered.
+*   **If "Rejected: Low Confidence"**: Check which metric failed.
+    *   *Duration too high?* -> Likely handling noise.
+    *   *Tilt too negative?* -> Likely speech or a dull object impact.
 
 ## Soundwave Visualization Screen
-
-The soundwave screen provides tools to analyze and refine detection performance.
-
-### Main Components
-
-#### 1. Status Indicators
-- **Detection Light** (Red): Flashes when a sound is detected
-- **Listening Light** (Orange/Yellow): Shows real-time audio input level
-- **Statistics**: Current RMS, noise floor, and total detection count
-
-#### 2. Detection Events Over Time Graph
-Shows all detected events in a timeline:
-- **X-axis**: Time in milliseconds (relative to first detection)
-- **Y-axis**: Decibel (dB) levels
-- **Blue Line**: Connects strength values across detections
-- **Orange Dots**: Peak values for each detection
-- **Red Line**: Noise floor threshold
-- **Grid**: Reference lines for easy reading
-
-**Purpose**: Visualize when detections occur and their relative intensity to identify patterns or false triggers.
-
-#### 3. Detection Detail View (Click on any detection)
-Shows the captured waveform for a single detection event:
-- **Waveform Graph**: RMS values over ~500ms capture window
-  - Each point represents a 10ms sample
-  - Blue line connects the samples
-  - Shows the actual sound envelope leading up to and following the detection
-- **Reference Lines**:
-  - **Peak** (solid): The maximum detected amplitude
-  - **Strength** (semi-transparent): The RMS amplitude at detection
-  - **Noise** (red): The current noise floor
-- **Legend**: Color-coded indicators for each line type
-
-**Purpose**: Examine individual detection waveforms to:
-- Verify the sound pattern matches expectations (sharp peak for claps)
-- Check if noise floor is set appropriately
-- Identify why certain sounds were or weren't detected
-
-#### 4. Recent Detections List
-Clickable cards showing:
-- Timestamp and age
-- Raw strength and peak values
-- dB conversions
-- Peak/Strength ratio (useful for tuning the 2.0 threshold)
-
-### Using the Screen to Refine Detection
-
-1. **Test Your Sounds**: Clap or knock near the device while viewing the screen
-2. **Check Detection Light**: Verify it flashes for your intended sounds
-3. **Review Timeline**: Look for unwanted detections (false positives) or missed sounds (false negatives)
-4. **Examine Waveforms**: Click detections to see if they have the expected sharp peak pattern
-5. **Analyze Ratios**: Check Peak/Strength ratios - true claps should be ≥2.0
-6. **Monitor Noise Floor**: Ensure it's stable and not too high (causing missed detections) or too low (causing false triggers)
-
-### Understanding dB Values
-
-The screen converts RMS amplitude to decibels using:
-```
-dB = 20 × log₁₀(RMS)
-```
-
-Typical ranges:
-- **Silence**: < -40 dB
-- **Ambient noise**: -30 to -20 dB  
+(Legacy components updated for new architecture)
+- **Status**: Now shows "Confidence %" instead of just Pass/Fail.
+- **Waveform**: Helpful for seeing the Isolation Ratio (Is the flat line before the spike truly flat?).
 - **Clap/Knock**: -10 to 0 dB or higher
 - **Noise floor**: Usually -35 to -25 dB depending on environment
 
