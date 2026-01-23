@@ -307,7 +307,10 @@ fun SoundwaveScreen(
                     }
                 }
 
-                items(detectorState.events) { event ->
+                items(
+                    items = detectorState.events,
+                    key = { it.timestampMs }
+                ) { event ->
                     DetectionCard(
                         event = event,
                         onClick = { 

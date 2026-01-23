@@ -33,6 +33,7 @@ class RunViewModel @Inject constructor(
     )
 
     val state: StateFlow<RunState?> = engine.state
+    val detectorState = soundDetector.state
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
 

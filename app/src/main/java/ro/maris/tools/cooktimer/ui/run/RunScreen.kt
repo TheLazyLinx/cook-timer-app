@@ -38,6 +38,8 @@ fun RunScreen(
     }
 
     val sfx = LocalSfxPlayer.current
+    val detectorState by vm.detectorState.collectAsState()
+    var showHelp by remember { mutableStateOf(true) }
     var lastState by remember { mutableStateOf(state) }
 
     LaunchedEffect(state) {
@@ -78,6 +80,7 @@ fun RunScreen(
     )
     val canGoBack = state.activeStepIndex > 0
 
+    Box(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -149,6 +152,11 @@ fun RunScreen(
                 )
             }
         }
+
+        SoundDetectionIndicator(
+            state = detectorState, 
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+        )
 
         Spacer(Modifier.weight(1f))
 
@@ -239,6 +247,10 @@ fun RunScreen(
             }
         }
     }
+    if (showHelp) {
+        StarterHelpOverlay(onDismiss = { showHelp = false })
+    }
+}
 }
 
 private fun formatTime(sec: Int): String {
