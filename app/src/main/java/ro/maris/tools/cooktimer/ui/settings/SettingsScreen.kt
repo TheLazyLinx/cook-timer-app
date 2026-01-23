@@ -209,10 +209,45 @@ fun SettingsScreen(
                                 SoundTriggerAction.PAUSE -> "Clap to pause the timer"
                                 SoundTriggerAction.NEXT_STEP -> "Clap to skip to the next step"
                                 SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Clap to play/pause the timer"
+                                SoundTriggerAction.PARSE -> "Clap to trigger command parsing"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "Allowed Triggers",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        
+                        Text(
+                            text = "Select which sounds can trigger the action",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        
+                        val availableProfiles = listOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap", "Knock", "Stomp")
+                        
+                        availableProfiles.forEach { profile ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = profile,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                androidx.compose.material3.Checkbox(
+                                    checked = settings.allowedSoundProfiles.contains(profile),
+                                    onCheckedChange = { vm.toggleAllowedProfile(profile) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -335,8 +370,9 @@ private fun SoundTriggerAction.toDisplayString(): String = when (this) {
     SoundTriggerAction.NONE -> "None"
     SoundTriggerAction.START_RESUME -> "Start/Resume"
     SoundTriggerAction.PAUSE -> "Pause"
-    SoundTriggerAction.NEXT_STEP -> "Next Step"
-    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Toggle Play/Pause"
+    SoundTriggerAction.NEXT_STEP -> "Next Step (Pass)"
+    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Start/Pause"
+    SoundTriggerAction.PARSE -> "Parse"
 }
 @Composable
 private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit) {

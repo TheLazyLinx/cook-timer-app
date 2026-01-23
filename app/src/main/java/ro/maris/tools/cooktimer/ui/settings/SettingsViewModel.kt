@@ -47,6 +47,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun toggleAllowedProfile(profile: String) {
+        viewModelScope.launch {
+            val current = settings.value.allowedSoundProfiles.toMutableSet()
+            if (current.contains(profile)) {
+                current.remove(profile)
+            } else {
+                current.add(profile)
+            }
+            settingsRepository.setAllowedSoundProfiles(current)
+        }
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             settingsRepository.setThemeMode(mode)

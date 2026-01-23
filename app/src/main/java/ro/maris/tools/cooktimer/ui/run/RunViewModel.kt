@@ -77,10 +77,15 @@ class RunViewModel @Inject constructor(
                     settings.soundTriggerAction != SoundTriggerAction.NONE &&
                     detectorState.isLit) {
                     
-                    val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastDetectionTimestamp >= minDetectionIntervalMs) {
-                        lastDetectionTimestamp = currentTime
-                        handleSoundTrigger(settings.soundTriggerAction)
+                    val lastEvent = detectorState.events.firstOrNull()
+                    val type = lastEvent?.type ?: "Unknown"
+
+                    if (settings.allowedSoundProfiles.contains(type)) {
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastDetectionTimestamp >= minDetectionIntervalMs) {
+                            lastDetectionTimestamp = currentTime
+                            handleSoundTrigger(settings.soundTriggerAction)
+                        }
                     }
                 }
             }
@@ -117,6 +122,9 @@ class RunViewModel @Inject constructor(
                     Phase.PAUSED -> resume()
                     Phase.COMPLETED -> { /* Do nothing */ }
                 }
+            }
+            SoundTriggerAction.PARSE -> {
+                // Future integration for Voice/Command parsing
             }
         }
     }

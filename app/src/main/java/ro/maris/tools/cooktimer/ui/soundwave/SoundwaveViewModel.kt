@@ -21,4 +21,8 @@ class SoundwaveViewModel @Inject constructor(
     fun selectEvent(event: SoundDetectionEvent?) {
         _selectedEvent.value = event
     }
+
+    fun clearHistory() {
+        soundDetector.clearHistory()
+    }
 }
