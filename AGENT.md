@@ -16,3 +16,4 @@ CRITICAL RULES
 15) Always write code with extensibility in mind.
 16) Do not use fallbacks, always fix the root cause or throw error. Fallbacks hide problems.
 17) You do not have permission to run tests. All tests are run manually by user.
+18) Do not run .\gradlew.bat assembleDebug or equivalents

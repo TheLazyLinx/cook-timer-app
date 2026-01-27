@@ -219,6 +219,11 @@ fun RunScreen(
                     ) {
                         Text(label)
                     }
+                    if (step?.durationSec == null) {
+                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Lap")
+                        }
+                    }
                     OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
                         Text("Pause")
                     }

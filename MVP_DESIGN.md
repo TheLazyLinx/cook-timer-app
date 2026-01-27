@@ -90,6 +90,12 @@ RunState {
 -   **Unlimited custom presets**
 -   No additional power features in MVP
 
+### Haptics & Feedback
+
+-   **Sound Triggers**: Valid sound triggers (snaps, claps) provide a "Clock Tick" vibration feedback.
+-   **State Transitions**: Any significant state change (Start, Pause, Resume, Step Change, Timer Completion) provides a "Confirm" (stronger) vibration.
+-   **Stopwatch**: A virtual "Lap" key (future feature) provides "Click" feedback currently wired to a UI button.
+
 ------------------------------------------------------------------------
 
 ## App Screens

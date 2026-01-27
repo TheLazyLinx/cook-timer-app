@@ -16,6 +16,7 @@ import ro.maris.tools.cooktimer.domain.model.RunState
 import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
+import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
 import javax.inject.Inject
 
 @HiltViewModel
@@ -24,6 +25,7 @@ class RunViewModel @Inject constructor(
     private val presetRepository: PresetRepository,
     private val settingsRepository: SettingsRepository,
     private val soundDetector: SoundDetector,
+    private val vibrationHelper: VibrationHelper,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -46,6 +48,11 @@ class RunViewModel @Inject constructor(
     fun next() = engine.next()
     fun back() = engine.back()
     fun reset() = engine.reset()
+
+    fun lap() {
+        vibrationHelper.vibrateVirtualKey()
+        // Wiring for future lap logic
+    }
 
     init {
         if (presetId != null) {
@@ -91,9 +98,24 @@ class RunViewModel @Inject constructor(
                 }
             }
         }
+
+        viewModelScope.launch {
+            var lastState: RunState? = null
+            engine.state.collect { currentState ->
+                if (lastState != null && currentState != null) {
+                    val phaseChanged = currentState.phase != lastState?.phase
+                    val stepChanged = currentState.activeStepIndex != lastState?.activeStepIndex
+                    if (phaseChanged || stepChanged) {
+                        vibrationHelper.vibrateConfirm()
+                    }
+                }
+                lastState = currentState
+            }
+        }
     }
 
     private fun handleSoundTrigger(action: SoundTriggerAction) {
+        vibrationHelper.vibrateTick()
         val currentState = state.value ?: return
 
         when (action) {

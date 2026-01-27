@@ -22,9 +22,7 @@ A sound only triggers the system if:
 3.  **Isolation**: The 120ms *before* the sound was relatively quiet. (Rejects clicks inside a sentence).
 4.  **Sanity Check**: The pre-event noise level must NOT be absolute zero (Digital Silence). This rejects "Wake-Up Pops" caused by microphone driver restarts.
 
-### Step C: Temporal Shape Checks (The Physics Check)
-2.  **Attack**: The volume rises explosively (2x increase) in < 10ms.
-3.  **Isolation**: The 120ms *before* the sound was relatively quiet. (Rejects clicks inside a sentence).
+*Success*: A valid trigger produces a "Clock Tick" haptic feedback response.
 
 ### Step C: Temporal Shape Checks (The Physics Check)
 Once triggered, the system monitors the sound's evolution over time to ensure it behaves like an Impact.
