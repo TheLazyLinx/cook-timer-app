@@ -16,6 +16,10 @@ CookTimer2 is a simple, reliable cooking timer that focuses on **processes**, no
   - Optional notes for each step
 - **Timer Engine**: State machine-based timer with start/pause/resume/next/back controls
 - **Sound Gesture Control**: Optional hands-free slap/knock detection for timer control
+- **Haptic Feedback**:
+  - Vibration confirmation for state transitions (user actions, timer completion, step changes)
+  - "Clock Tick" feedback for valid sound triggers
+  - Virtual key feedback for future functionality (Lap)
 - **Dark/Light Theme**: System-aware theming with manual override
 - **Local Storage**: Room database for persistent preset storage
 - **Built-in Presets**: Pre-configured templates that can be copied and customized
@@ -44,8 +48,7 @@ app/src/main/java/ro/maris/tools/cooktimer/
 │   ├── presets/           # Presets list screen and ViewModel
 │   ├── edit/              # Preset editor screen and ViewModel
 │   ├── run/               # Timer running screen and ViewModel
-│   ├── sound/             # Sound test screen and ViewModel
-│   ├── theme/             # Material3 theming (Color, Type, Theme)
+│   ├── sound/             # Sound test screen and ViewModel│   │   ├── haptics/           # Vibration helper and implementation│   ├── theme/             # Material3 theming (Color, Type, Theme)
 │   └── navigation/        # Navigation setup (AppNavHost, Routes)
 ├── audio/                 # Sound effects player and detector
 └── di/                    # Dependency injection modules (Hilt)
@@ -59,6 +62,7 @@ app/src/main/java/ro/maris/tools/cooktimer/
 - **Navigation**: Jetpack Navigation Compose
 - **Database**: Room with SQLite
 - **Audio**: AudioRecord for sound detection, SoundPool for effects
+- **Haptics**: Android VibrationEffect and VibratorManager
 - **Build**: Gradle with Kotlin DSL, KSP for annotation processing
 
 ## Key Components
