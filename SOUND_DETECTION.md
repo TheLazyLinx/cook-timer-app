@@ -87,3 +87,52 @@ The sound is scored against profiles.
 ### Troubleshooting
 *   **Missed Snaps**: Ensure snap is sharp. Muffled/cloth snaps are filtered.
 *   **False Trigger**: Check "Isolation" score. Noisy rooms raise the bar automatically.
+
+---
+
+## 5. Audio Feedback System
+
+The application uses a managed `SoundPool` architecture tailored for short, responsive UI and feedback sounds.
+
+### Interaction Logic (The Mixer)
+To prevent audio chaos during rapid interactions, the `SfxPlayer` implements intelligent stream management:
+
+1.  **Anti-Spam (Cutoff)**:
+    *   If a sound is requested (e.g., `CLICK`) while it is already playing, the *previous* instance is stopped immediately.
+    *   Prevents "machine-gun" audio overlap effects on rapid button presses.
+
+2.  **Auto-Ducking**:
+    *   If a new sound starts while *different* sounds are playing, the existing sounds are momentarily ducked (volume reduced to 30%).
+    *   Ensures the newest feedback event takes priority without abruptly silencing context.
+
+3.  **Amplitude Protection (Clipping)**:
+    *   If two sounds trigger within **50ms** of each other, the second sound is played at reduced volume (70%).
+    *   Prevents digital clipping and distortion from summed waveforms.
+
+### Asset Map
+| Logical Event | Asset File | Role |
+| :--- | :--- | :--- |
+| **Timer Tick** | `pop_high` / `pop_low` | Metronome feedback. |
+| **UI Click** | `metalclick` | General button interaction. |
+| **Toggle** | `toggle_002` | Switch enable/disable state. |
+| **Detect Success** | `drop_003` | Confirmation of valid snap/slap. |
+| **Detect Fail** | `rollover6` | Feedback for invalid/rejected trigger. |
+| **Alarm** | `alarm_clock_classic` | Timer completion. |
+
+---
+
+## 6. User Configuration & Feedback Settings
+
+### Audio & Haptics Tab
+The settings interface is divided into **General** and **Audio & Haptics** tabs to prioritize feedback customization.
+
+### Detection Profiles (Bundled)
+To simplify the user experience, detection complexity is abstracted into bundled profiles:
+*   **Snap**: Optimizes for high-frequency sharp transients (fingers).
+*   **Slap**: Optimizes for mid-frequency, broader impacts (hands).
+*   **Knock**: Optimizes for lower-frequency solid impacts (knuckles).
+*   **All**: Enables the full spectrum of detection logic.
+
+### Haptic Hierarchy
+1.  **System Master**: The app respects android `HAPTIC_FEEDBACK_ENABLED`. If the OS setting is off, the app stays silent tactilely.
+2.  **App Override**: Users can disable haptics specifically for the app without changing system settings.

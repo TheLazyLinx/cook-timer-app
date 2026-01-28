@@ -36,6 +36,8 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -45,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -66,17 +69,30 @@ fun SettingsScreen(
     onSoundwave: () -> Unit
 ) {
     val settings by vm.settings.collectAsState()
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val tabs = listOf("General", "Audio & Haptics")
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            Column {
+                TopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    }
+                )
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTabIndex == index,
+                            onClick = { selectedTabIndex = index },
+                            text = { Text(title) }
+                        )
                     }
                 }
-            )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -87,193 +103,214 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Theme Section
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+            if (selectedTabIndex == 0) {
+                // Theme Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "Theme",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Choose your preferred theme",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
-                    ThemeModeDropdown(
-                        selectedMode = settings.themeMode,
-                        onModeSelected = { vm.setThemeMode(it) }
-                    )
-                    
-                    Text(
-                        text = when (settings.themeMode) {
-                            ThemeMode.SYSTEM -> "Follows your device's theme settings"
-                            ThemeMode.LIGHT -> "Always use light theme"
-                            ThemeMode.DARK -> "Always use dark theme"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Sound Effects Section
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Sound Effects",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Play audio feedback for timer events",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("Enable sound effects")
-                        Switch(
-                            checked = settings.soundEffectsEnabled,
-                            onCheckedChange = { vm.setSoundEffectsEnabled(it) }
-                        )
-                    }
-                }
-            }
-
-            // Sound Detection Section
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "Sound Gesture Control",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "Control the timer with claps or knocks",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Enable sound detection")
-                        Switch(
-                            checked = settings.soundDetectionEnabled,
-                            onCheckedChange = { vm.setSoundDetectionEnabled(it) }
-                        )
-                    }
-
-                    if (settings.soundDetectionEnabled) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
                         Text(
-                            text = "Sound Trigger Action",
-                            style = MaterialTheme.typography.titleSmall
+                            text = "Theme",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Choose your preferred theme",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         
-                        SoundTriggerActionDropdown(
-                            selectedAction = settings.soundTriggerAction,
-                            onActionSelected = { vm.setSoundTriggerAction(it) }
+                        ThemeModeDropdown(
+                            selectedMode = settings.themeMode,
+                            onModeSelected = { vm.setThemeMode(it) }
                         )
                         
                         Text(
-                            text = when (settings.soundTriggerAction) {
-                                SoundTriggerAction.NONE -> "Sound gestures will be ignored"
-                                SoundTriggerAction.START_RESUME -> "Clap to start or resume the timer"
-                                SoundTriggerAction.PAUSE -> "Clap to pause the timer"
-                                SoundTriggerAction.NEXT_STEP -> "Clap to skip to the next step"
-                                SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Clap to play/pause the timer"
-                                SoundTriggerAction.PARSE -> "Clap to trigger command parsing"
+                            text = when (settings.themeMode) {
+                                ThemeMode.SYSTEM -> "Follows your device's theme settings"
+                                ThemeMode.LIGHT -> "Always use light theme"
+                                ThemeMode.DARK -> "Always use dark theme"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
+                    }
+                }
+            } else {
+                // Sound Effects Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
-                            text = "Allowed Triggers",
-                            style = MaterialTheme.typography.titleSmall
+                            text = "Sound Effects",
+                            style = MaterialTheme.typography.titleMedium
                         )
-                        
                         Text(
-                            text = "Select which sounds can trigger the action",
+                            text = "Play audio feedback for timer events",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Enable sound effects")
+                            Switch(
+                                checked = settings.soundEffectsEnabled,
+                                onCheckedChange = { vm.setSoundEffectsEnabled(it) }
+                            )
+                        }
+                    }
+                }
+
+                // Haptics Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Haptics",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Vibrate on timer events and interactions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Enable haptics")
+                            Switch(
+                                checked = settings.hapticsEnabled,
+                                onCheckedChange = { vm.setHapticsEnabled(it) }
+                            )
+                        }
+                    }
+                }
+
+                // Sound Detection Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Sound Gesture Control",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Control the timer with claps or knocks",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         
-                        val availableProfiles = listOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap", "Knock", "Stomp")
-                        
-                        availableProfiles.forEach { profile ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = profile,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                androidx.compose.material3.Checkbox(
-                                    checked = settings.allowedSoundProfiles.contains(profile),
-                                    onCheckedChange = { vm.toggleAllowedProfile(profile) }
-                                )
-                            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Enable sound detection")
+                            Switch(
+                                checked = settings.soundDetectionEnabled,
+                                onCheckedChange = { vm.setSoundDetectionEnabled(it) }
+                            )
+                        }
+
+                        if (settings.soundDetectionEnabled) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Text(
+                                text = "Sound Trigger Action",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            
+                            SoundTriggerActionDropdown(
+                                selectedAction = settings.soundTriggerAction,
+                                onActionSelected = { vm.setSoundTriggerAction(it) }
+                            )
+                            
+                            Text(
+                                text = when (settings.soundTriggerAction) {
+                                    SoundTriggerAction.NONE -> "Sound gestures will be ignored"
+                                    SoundTriggerAction.START_RESUME -> "Clap to start or resume the timer"
+                                    SoundTriggerAction.PAUSE -> "Clap to pause the timer"
+                                    SoundTriggerAction.NEXT_STEP -> "Clap to skip to the next step"
+                                    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Clap to play/pause the timer"
+                                    SoundTriggerAction.PARSE -> "Clap to trigger command parsing"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            Text(
+                                text = "Allowed Triggers",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            
+                            Text(
+                                text = "Select which sounds can trigger the action",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            SoundTriggerTypeDropdown(
+                                selectedType = vm.getSoundTriggerType(),
+                                onTypeSelected = { vm.setSoundTriggerType(it) }
+                            )
                         }
                     }
                 }
-            }
-                        // Sound Test Section
-            if (settings.soundDetectionEnabled) {
-                SoundTestSection(vm = vm, onSoundwave = onSoundwave)
-            }
-                        // Informational Card
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                
+                // Sound Test Section
+                if (settings.soundDetectionEnabled) {
+                    SoundTestSection(vm = vm, onSoundwave = onSoundwave)
+                }
+
+                // Informational Card
+                Card(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "About Sound Gestures",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = "Sound gesture control uses your device's microphone to detect loud, sudden sounds like claps or knocks. This feature requires microphone permission and works best in quiet environments.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "About Sound Gestures",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = "Sound gesture control uses your device's microphone to detect loud, sudden sounds like claps or knocks. This feature requires microphone permission and works best in quiet environments.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -312,6 +349,60 @@ private fun ThemeModeDropdown(
                     text = { Text(mode.toDisplayString()) },
                     onClick = {
                         onModeSelected(mode)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SoundTriggerTypeDropdown(
+    selectedType: SettingsViewModel.SoundTriggerType,
+    onTypeSelected: (SettingsViewModel.SoundTriggerType) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it }
+    ) {
+        OutlinedTextField(
+            value = when (selectedType) {
+                SettingsViewModel.SoundTriggerType.SNAP -> "Snaps"
+                SettingsViewModel.SoundTriggerType.SLAP -> "Slaps"
+                SettingsViewModel.SoundTriggerType.KNOCK -> "Knocks"
+                SettingsViewModel.SoundTriggerType.ALL -> "Any Sound"
+            },
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Trigger Type") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+        )
+        
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            SettingsViewModel.SoundTriggerType.entries.forEach { type ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when (type) {
+                                SettingsViewModel.SoundTriggerType.SNAP -> "Snaps"
+                                SettingsViewModel.SoundTriggerType.SLAP -> "Slaps"
+                                SettingsViewModel.SoundTriggerType.KNOCK -> "Knocks"
+                                SettingsViewModel.SoundTriggerType.ALL -> "Any Sound"
+                            }
+                        )
+                    },
+                    onClick = {
+                        onTypeSelected(type)
                         expanded = false
                     }
                 )

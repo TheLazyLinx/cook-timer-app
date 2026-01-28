@@ -28,6 +28,7 @@ class DataStoreSettingsRepository @Inject constructor(
 
     private object Keys {
         val SOUND_EFFECTS_ENABLED = booleanPreferencesKey("sound_effects_enabled")
+        val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val SOUND_DETECTION_ENABLED = booleanPreferencesKey("sound_detection_enabled")
         val SOUND_TRIGGER_ACTION = stringPreferencesKey("sound_trigger_action")
         val ALLOWED_SOUND_PROFILES = stringSetPreferencesKey("allowed_sound_profiles")
@@ -38,6 +39,7 @@ class DataStoreSettingsRepository @Inject constructor(
         return context.dataStore.data.map { preferences ->
             AppSettings(
                 soundEffectsEnabled = preferences[Keys.SOUND_EFFECTS_ENABLED] ?: true,
+                hapticsEnabled = preferences[Keys.HAPTICS_ENABLED] ?: true,
                 soundDetectionEnabled = preferences[Keys.SOUND_DETECTION_ENABLED] ?: false,
                 soundTriggerAction = preferences[Keys.SOUND_TRIGGER_ACTION]
                     ?.let { runCatching { SoundTriggerAction.valueOf(it) }.getOrNull() }
@@ -58,6 +60,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setSoundEffectsEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[Keys.SOUND_EFFECTS_ENABLED] = enabled
+        }
+    }
+
+    override suspend fun setHapticsEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.HAPTICS_ENABLED] = enabled
         }
     }
 
