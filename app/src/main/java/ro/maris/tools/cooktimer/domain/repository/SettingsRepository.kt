@@ -9,6 +9,7 @@ interface SettingsRepository {
     fun observeSettings(): Flow<AppSettings>
     suspend fun getSettings(): AppSettings
     suspend fun setSoundEffectsEnabled(enabled: Boolean)
+    suspend fun setHapticsEnabled(enabled: Boolean)
     suspend fun setSoundDetectionEnabled(enabled: Boolean)
     suspend fun setSoundTriggerAction(action: SoundTriggerAction)
     suspend fun setAllowedSoundProfiles(profiles: Set<String>)

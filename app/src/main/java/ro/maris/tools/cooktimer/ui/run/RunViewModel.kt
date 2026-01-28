@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.SoundDetector
+import ro.maris.tools.cooktimer.audio.SfxPlayer
+import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
 import ro.maris.tools.cooktimer.domain.model.Phase
@@ -26,8 +28,11 @@ class RunViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
+    private val sfxPlayer: SfxPlayer,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    private var lastRejectionReason: String? = null
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -80,6 +85,15 @@ class RunViewModel @Inject constructor(
                     soundDetector.stop()
                 }
 
+                // Play failure sound if rejection reason changed
+                if (detectorState.lastRejectionReason != null &&
+                    detectorState.lastRejectionReason != lastRejectionReason) {
+                    if (settings.soundDetectionEnabled) {
+                        sfxPlayer.play(SfxId.DetectionFailed)
+                    }
+                }
+                lastRejectionReason = detectorState.lastRejectionReason
+
                 // Handle sound triggers
                 if (settings.soundDetectionEnabled && 
                     settings.soundTriggerAction != SoundTriggerAction.NONE &&
@@ -92,6 +106,7 @@ class RunViewModel @Inject constructor(
                         val currentTime = System.currentTimeMillis()
                         if (currentTime - lastDetectionTimestamp >= minDetectionIntervalMs) {
                             lastDetectionTimestamp = currentTime
+                            sfxPlayer.play(SfxId.DetectionSuccess)
                             handleSoundTrigger(settings.soundTriggerAction)
                         }
                     }

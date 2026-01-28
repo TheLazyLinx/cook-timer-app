@@ -50,9 +50,17 @@ class SfxPlayer @Inject constructor(
         private set
     
     private var lastPlayAtMs: Long = 0L
-    private val minIntervalMs: Long = 70L
-    private val perSfxIntervalMs: Long = 140L
     private val lastPlayBySfx: MutableMap<SfxId, Long> = mutableMapOf()
+
+    // Active streams tracking
+    private data class StreamInfo(
+        val streamId: Int,
+        val sfxId: SfxId,
+        val startTimeMs: Long,
+        val endTimeMs: Long,
+        var currentVolume: Float
+    )
+    private val activeStreams = mutableListOf<StreamInfo>()
 
     init {
         scope.launch {
@@ -65,14 +73,57 @@ class SfxPlayer @Inject constructor(
     fun play(sfx: SfxId) {
         if (!enabled || !canPlayNow()) return
         val now = SystemClock.elapsedRealtime()
-        if (now - lastPlayAtMs < minIntervalMs) return
-        val lastForSfx = lastPlayBySfx[sfx] ?: 0L
-        if (now - lastForSfx < perSfxIntervalMs) return
+        
+        // Anti-spam global throttle (very short)
+        if (now - lastPlayAtMs < 30L) return
+
+        // 1. Cleanup expired streams
+        activeStreams.removeAll { it.endTimeMs <= now }
+
+        // 2. Handle same-sound cutoff (spamming logic)
+        // If the same sound is already playing, stop it.
+        val sameSoundStreams = activeStreams.filter { it.sfxId == sfx }
+        sameSoundStreams.forEach { stream ->
+            soundPool.stop(stream.streamId)
+            activeStreams.remove(stream)
+        }
+
+        // 3. Handle different-sound overlap (ducking/fading)
+        // If other sounds are active, fade them out to prioritize the new one.
+        activeStreams.forEach { stream ->
+            if (stream.sfxId != sfx) {
+                // Duck logic: reduce volume to 30% of current
+                val newVol = stream.currentVolume * 0.3f
+                soundPool.setVolume(stream.streamId, newVol, newVol)
+                stream.currentVolume = newVol
+            }
+        }
+
+        // 4. Simultaneous trigger logic (Clipping prevention)
+        // If another sound started very recently (< 50ms), reduce both volumes slightly
+        val recentStart = activeStreams.any { now - it.startTimeMs < 50L }
+        val finalVolume = if (recentStart) sfx.volume * 0.7f else sfx.volume
+
+        // Play
         lastPlayAtMs = now
         lastPlayBySfx[sfx] = now
         val soundId = soundIds[sfx] ?: return
-        soundPool.play(soundId, 1f, 1f, 1, 0, 1f)
+        
+        val streamId = soundPool.play(soundId, finalVolume, finalVolume, 1, 0, 1f)
+        
+        if (streamId != 0) {
+            activeStreams.add(
+                StreamInfo(
+                    streamId = streamId,
+                    sfxId = sfx,
+                    startTimeMs = now,
+                    endTimeMs = now + sfx.durationMs,
+                    currentVolume = finalVolume
+                )
+            )
+        }
     }
+
 
     private fun canPlayNow(): Boolean {
         if (!powerManager.isInteractive) return false

@@ -35,6 +35,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setHapticsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setHapticsEnabled(enabled)
+        }
+    }
+
     fun setSoundDetectionEnabled(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setSoundDetectionEnabled(enabled)
@@ -44,6 +50,32 @@ class SettingsViewModel @Inject constructor(
     fun setSoundTriggerAction(action: SoundTriggerAction) {
         viewModelScope.launch {
             settingsRepository.setSoundTriggerAction(action)
+        }
+    }
+
+    enum class SoundTriggerType {
+        SNAP, SLAP, KNOCK, ALL
+    }
+
+    private val profilesByTriggerType = mapOf(
+        SoundTriggerType.SNAP to setOf("Snap (High)", "Snap (Mid)", "Snap (Low)"),
+        SoundTriggerType.SLAP to setOf("Slap (Airy)", "Slap", "Slap (Wet)"),
+        SoundTriggerType.KNOCK to setOf("Knock"),
+        SoundTriggerType.ALL to setOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap (Airy)", "Slap", "Slap (Wet)", "Knock")
+    )
+
+    fun getSoundTriggerType(): SoundTriggerType {
+        val current = settings.value.allowedSoundProfiles
+        if (current.containsAll(profilesByTriggerType[SoundTriggerType.ALL]!!)) return SoundTriggerType.ALL
+        if (current.containsAll(profilesByTriggerType[SoundTriggerType.SNAP]!!)) return SoundTriggerType.SNAP
+        if (current.containsAll(profilesByTriggerType[SoundTriggerType.SLAP]!!)) return SoundTriggerType.SLAP
+        if (current.containsAll(profilesByTriggerType[SoundTriggerType.KNOCK]!!)) return SoundTriggerType.KNOCK
+        return SoundTriggerType.ALL
+    }
+
+    fun setSoundTriggerType(type: SoundTriggerType) {
+        viewModelScope.launch {
+            settingsRepository.setAllowedSoundProfiles(profilesByTriggerType[type] ?: emptySet())
         }
     }
 
