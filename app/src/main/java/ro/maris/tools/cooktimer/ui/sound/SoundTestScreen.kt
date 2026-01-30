@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
+import android.widget.Toast
 
 @Composable
 fun SoundTestScreen(
@@ -60,7 +61,9 @@ fun SoundTestScreen(
         }
     }
     val state by vm.state.collectAsState()
-
+    
+    // We only start detection explicitly if we have permission.
+    // NOTE: We do NOT rely on "Start" button anymore for viewing logs.
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             vm.startDetection()
@@ -78,9 +81,25 @@ fun SoundTestScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         TextButton(onClick = onBack) { Text("Back") }
-        Text(text = "Sound Test", style = MaterialTheme.typography.titleLarge)
-
-        if (!hasPermission) {
+            Text(text = "Sound Test (Logs: ${state.logs.size})", style = MaterialTheme.typography.titleLarge)
+    
+            if (state.logs.isNotEmpty()) {
+                Row(
+                   horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(onClick = { 
+                        vm.copyLogsToClipboard(context) 
+                        Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("Copy Logs")
+                    }
+                    Button(onClick = { vm.clearLogs() }) {
+                        Text("Clear Logs")
+                    }
+                }
+            }
+    
+            if (!hasPermission) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),

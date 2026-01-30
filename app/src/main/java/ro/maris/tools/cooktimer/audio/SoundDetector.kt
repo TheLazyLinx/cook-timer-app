@@ -47,7 +47,8 @@ data class SoundDetectorState(
     val currentRms: Float = 0f,
     val lastRejectionReason: String? = null,
     val debugInfo: String = "",
-    val events: List<SoundDetectionEvent> = emptyList()
+    val events: List<SoundDetectionEvent> = emptyList(),
+    val logs: List<String> = emptyList()
 )
 
 @Singleton
@@ -58,6 +59,8 @@ class SoundDetector @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(SoundDetectorState())
     val state: StateFlow<SoundDetectorState> = _state
+    
+    var debugContext: String = "Unknown" 
 
     private val sampleRate = 16000
     private val windowMs = 10
@@ -110,7 +113,9 @@ class SoundDetector @Inject constructor(
         SoundProfile("Slap (Airy)", minDurMs = 50, maxDurMs = 200, minZcr = 0.40f, maxZcr = 0.90f, minCentroid = 3000f, maxCentroid = 10000f, minTilt = -8f),
 
         // 5. SLAP STANDARD
-        SoundProfile("Slap", minDurMs = 25, maxDurMs = 200, minZcr = 0.05f, maxZcr = 0.60f, minCentroid = 1000f, maxCentroid = 5000f, minTilt = -10f),
+        // Raised minDurMs (25->45) to reject short speech consonants (approx 20-30ms).
+        // Added maxTilt (0.5f) - Slaps are broadband but shouldn't be excessively "hissy" like 's' sounds (Tilt > 1.0).
+        SoundProfile("Slap", minDurMs = 45, maxDurMs = 200, minZcr = 0.05f, maxZcr = 0.60f, minCentroid = 1000f, maxCentroid = 5000f, minTilt = -10f, maxTilt = 0.5f),
         
         // 6. SLAP WET (Bass)
         SoundProfile("Slap (Wet)", minDurMs = 30, maxDurMs = 180, minZcr = 0.04f, maxZcr = 0.40f, minCentroid = 400f, maxCentroid = 1500f, minTilt = -18f), 
@@ -184,11 +189,12 @@ class SoundDetector @Inject constructor(
         recordJob = null
         litJob?.cancel()
         litJob = null
-        _state.update { SoundDetectorState() }
+        // Preserve history (logs, events, rejection reason) so user can inspect them after stopping.
+        _state.update { it.copy(isLit = false, rms = 0f, currentRms = 0f, noiseFloor = 0f) }
     }
 
     fun clearHistory() {
-        _state.update { it.copy(events = emptyList(), count = 0, lastRejectionReason = null, debugInfo = "") }
+        _state.update { it.copy(events = emptyList(), count = 0, lastRejectionReason = null, debugInfo = "", logs = emptyList()) }
     }
 
     private suspend fun runRecorderLoop() {
@@ -550,7 +556,9 @@ class SoundDetector @Inject constructor(
 
                     // Log Data for Analysis
                     val typeLog = if (isValid && bestMatch != null) "DETECTED_${bestMatch.name.replace(" ", "_").uppercase()}" else "REJECTED"
-                    Log.i("SoundAnalysis", "$typeLog,${"%.2f".format(bestConfidence)},$durationMs,${"%.4f".format(eventPeakRms)},${"%.4f".format(eventPeakRaw)},${"%.2f".format(avgZcr)},${"%.0f".format(avgCentroid)},${"%.2f".format(avgTilt)},${"%.3f".format(if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f)}|$rejectionReason")
+                    val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+                    val logEntry = "$timestamp,$debugContext,$typeLog,${"%.2f".format(bestConfidence)},$durationMs,${"%.4f".format(eventPeakRms)},${"%.4f".format(eventPeakRaw)},${"%.2f".format(avgZcr)},${"%.0f".format(avgCentroid)},${"%.2f".format(avgTilt)},${"%.3f".format(if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f)}|$rejectionReason"
+                    Log.i("SoundAnalysis", logEntry)
 
                     if (isValid && bestMatch != null) {
                         // CONFIRMED DETECTION
@@ -568,6 +576,7 @@ class SoundDetector @Inject constructor(
                         )
                         _state.update { current ->
                             val updated = (listOf(event) + current.events).take(maxEvents)
+                            val updatedLogs = (current.logs + logEntry).takeLast(1000)
                             current.copy(
                                 isLit = true,
                                 count = current.count + 1,
@@ -578,7 +587,8 @@ class SoundDetector @Inject constructor(
                                 currentRms = rmsF,
                                 lastRejectionReason = null, 
                                 debugInfo = "${bestMatch.name} ${(bestConfidence*100).toInt()}%",
-                                events = updated
+                                events = updated,
+                                logs = updatedLogs
                             )
                         }
                         litJob?.cancel()
@@ -589,9 +599,11 @@ class SoundDetector @Inject constructor(
                     } else if (rejectionReason != null) {
                          // Update state with rejection reason to help debugging
                         _state.update { current ->
+                            val updatedLogs = (current.logs + logEntry).takeLast(1000)
                             current.copy(
                                 lastRejectionReason = rejectionReason,
-                                debugInfo = "Last Fail: $rejectionReason"
+                                debugInfo = "Last Fail: $rejectionReason",
+                                logs = updatedLogs
                             )
                         }
                     }

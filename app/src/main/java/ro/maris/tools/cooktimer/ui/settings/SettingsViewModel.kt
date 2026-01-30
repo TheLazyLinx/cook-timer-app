@@ -98,6 +98,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun startDetection(): Boolean {
+        soundDetector.debugContext = "SETTINGS"
         return soundDetector.start()
     }
 }
