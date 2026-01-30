@@ -12,20 +12,22 @@ To help refine detection, the app now outputs a structured CSV-style log for eve
 ## Column Breakdown
 
 The log output follows this format:
-`RESULT,CONFIDENCE,DURATION,RMS,PEAK,ZCR,CENTROID,TILT,ISOLATION|REASON`
+`TIMESTAMP,CONTEXT,RESULT,CONFIDENCE,DURATION,RMS,PEAK,ZCR,CENTROID,TILT,ISOLATION|REASON`
 
 | Column | Name | Description | Target / Notes |
 | :--- | :--- | :--- | :--- |
-| **0** | **Result** | `DETECTED_[PROFILE]` or `REJECTED`. | Filter by this to see what worked vs failed. |
-| **1** | **Confidence** | `0.00` - `1.00` | Score of the best matching profile. We usually want > 0.60. |
-| **2** | **Duration** | Milliseconds (`ms`) | **Snaps:** Short (<50ms). **Speech:** Long (>100ms). |
-| **3** | **RMS** | Root Mean Square (0.0 - 1.0) | The "Volume" or energy of the event. |
-| **4** | **Peak** | Raw Amplitude (0.0 - 1.0) | The absolute loudest point. Useful for clipping detection. |
-| **5** | **ZCR** | Zero Crossing Rate | High frequency noise = High ZCR. **Snaps:** ~0.10-0.30. |
-| **6** | **Centroid** | Spectral Centroid (Hz) | "Center of Gravity" of the frequency. **Snaps:** High (>2500Hz). |
-| **7** | **Tilt** | Spectral Slope | Slope of frequency drop-off. **Snaps:** Positive/Flat. **Noise:** Negative. |
-| **8** | **Isolation** | Pre-Noise / Event-RMS Ratio | How "sudden" the sound was. Lower is better. < 0.5 is ideal. |
-| **9** | **Reason** | Text Description | Why the event was rejected (if applicable). Includes "Artifact" for wakes. |
+| **0** | **Timestamp** | `HH:mm:ss.SSS` | When the event occurred. |
+| **1** | **Context** | String | The preset name or screen context (e.g., "Egg Timer", "TESTING"). |
+| **2** | **Result** | `DETECTED_[PROFILE]` or `REJECTED`. | Filter by this to see what worked vs failed. |
+| **3** | **Confidence** | `0.00` - `1.00` | Score of the best matching profile. We usually want > 0.60. |
+| **4** | **Duration** | Milliseconds (`ms`) | **Snaps:** Short (<50ms). **Speech:** Long (>100ms). |
+| **5** | **RMS** | Root Mean Square (0.0 - 1.0) | The "Volume" or energy of the event. |
+| **6** | **Peak** | Raw Amplitude (0.0 - 1.0) | The absolute loudest point. Useful for clipping detection. |
+| **7** | **ZCR** | Zero Crossing Rate | High frequency noise = High ZCR. **Snaps:** ~0.10-0.30. |
+| **8** | **Centroid** | Spectral Centroid (Hz) | "Center of Gravity" of the frequency. **Snaps:** High (>2500Hz). |
+| **9** | **Tilt** | Spectral Slope | Slope of frequency drop-off. **Snaps:** Positive/Flat. **Noise:** Negative. |
+| **10** | **Isolation** | Pre-Noise / Event-RMS Ratio | How "sudden" the sound was. Lower is better. < 0.5 is ideal. |
+| **11** | **Reason** | Text Description | Why the event was rejected (if applicable). Includes "Artifact" for wakes. |
 
 ## Optimization Strategy
 

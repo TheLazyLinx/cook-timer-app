@@ -65,6 +65,7 @@ class RunViewModel @Inject constructor(
                 presetRepository.observePreset(presetId).collectLatest { preset ->
                     if (preset != null) {
                         engine.loadPreset(preset)
+                        soundDetector.debugContext = preset.name
                     }
                 }
             }
