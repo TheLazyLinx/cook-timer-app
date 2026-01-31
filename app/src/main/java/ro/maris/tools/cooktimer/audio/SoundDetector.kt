@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,8 +76,13 @@ class SoundDetector @Inject constructor(
     private val noiseAlphaRise = 0.005f 
     private val noiseAlphaFall = 0.050f // Increased fall speed to recover faster from "Snap Sprees"
     private val maxEvents = 50 // Increased history size
+    private val maxLogs = 750 // Limit logs to prevent memory bloat
     private val confidenceThreshold = 0.78f // Raised from 0.75 to 0.78 to cut marginal Speech FPs (like the 76% one)
-    private val rangeTolerance = 1.6f // Tightened from 1.8 to force stricter adherence to profile shapes
+    
+    // Chaos Rejection (Pill Rattle, Continuous Noise)
+    private val preEventVarianceMax = 0.15f // Reject if pre-event coefficient of variation is too high
+    private val postEventCheckFrames = 5 // Wait 50ms after event ends to verify quiet
+    private val postEventQuietRatio = 0.5f // Post-event RMS must drop below 50% of threshold
     
     // Profiles
     data class SoundProfile(
@@ -133,7 +139,7 @@ class SoundDetector @Inject constructor(
         // Edges of range = 0.8 (Not 1.0, to prevent "barely-in" 100% scores)
         // Outside range = Rapid decay
         
-        if (value >= min && value <= max) {
+        if (value in min..max) {
             val range = max - min
             if (range < 0.001f) return 1.0f
             
@@ -163,9 +169,10 @@ class SoundDetector @Inject constructor(
         return score.coerceIn(0f, 0.8f)
     }
 
-    private var running = false
+    @Volatile private var running = false
     private var recordJob: Job? = null
     private var litJob: Job? = null
+    private var recorder: AudioRecord? = null
 
     fun start(): Boolean {
         if (running) return true
@@ -189,12 +196,32 @@ class SoundDetector @Inject constructor(
         recordJob = null
         litJob?.cancel()
         litJob = null
+
+        // Force release to break any blocking read
+        try {
+            recorder?.stop()
+            recorder?.release()
+        } catch (e: Exception) {
+            Log.e("SoundDetector", "Error stopping recorder in stop()", e)
+        }
+        recorder = null
+
         // Preserve history (logs, events, rejection reason) so user can inspect them after stopping.
         _state.update { it.copy(isLit = false, rms = 0f, currentRms = 0f, noiseFloor = 0f) }
     }
 
     fun clearHistory() {
         _state.update { it.copy(events = emptyList(), count = 0, lastRejectionReason = null, debugInfo = "", logs = emptyList()) }
+    }
+
+    /**
+     * Release all resources and cancel the coroutine scope.
+     * Call this when the app is being destroyed to prevent memory leaks.
+     * After calling release(), this SoundDetector instance should not be used again.
+     */
+    fun release() {
+        stop()
+        scope.cancel()
     }
 
     private suspend fun runRecorderLoop() {
@@ -204,23 +231,36 @@ class SoundDetector @Inject constructor(
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(windowSamples * 2)
 
-        var recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            minBuffer
-        )
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+        val newRecorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBuffer
+            )
+        } catch (e: SecurityException) {
+            Log.e("SoundDetector", "Permission denied for audio recording", e)
             running = false
-            recorder.release()
             return
         }
+        // Store in field for stop() access
+        recorder = newRecorder
+
+        if (newRecorder.state != AudioRecord.STATE_INITIALIZED) {
+            running = false
+            newRecorder.release()
+            recorder = null
+            return
+        }
+        
+        // Use local variable for loop logic to avoid race conditions if field is nulled
+        var currentRecorder = newRecorder
         
         var aec: AcousticEchoCanceler? = null
         if (AcousticEchoCanceler.isAvailable()) {
             try {
-                aec = AcousticEchoCanceler.create(recorder.audioSessionId)
+                aec = AcousticEchoCanceler.create(currentRecorder.audioSessionId)
                 if (aec != null) {
                     aec.enabled = true
                     Log.d("SoundDetector", "Acoustic Echo Canceler enabled")
@@ -233,6 +273,7 @@ class SoundDetector @Inject constructor(
         }
         
         val buffer = ShortArray(windowSamples)
+        val floatBuffer = FloatArray(windowSamples) // Check that allocation is outside loop
         var noiseFloor = 0.005f
         var flatlineCount = 0
         val maxFlatlineBeforeRestart = 100 // Reduced to ~1 second to catch dropouts faster
@@ -269,18 +310,25 @@ class SoundDetector @Inject constructor(
         var preEventNoiseAvg = 0f
         var consecutiveLoudFrames = 0
         
-        recorder.startRecording()
-        Log.d("SoundDetector", "Recording started. Window: ${windowMs}ms")
+        // Post-Event Quiet Check State (for chaos rejection)
+        var postEventCheckCountdown = 0
+        var pendingEvent: SoundDetectionEvent? = null
+        var pendingEventLogEntry: String? = null
+        var thresholdAtEventEnd = 0f
+        
+        try {
+            currentRecorder.startRecording()
+            Log.d("SoundDetector", "Recording started. Window: ${windowMs}ms")
 
-        while (running) {
-            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            while (running) {
+            if (currentRecorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 Log.e("SoundDetector", "Recorder stopped recording unexpectedly")
-                recorder.startRecording()
+                currentRecorder.startRecording()
                 delay(100)
                 continue
             }
 
-            val read = recorder.read(buffer, 0, buffer.size)
+            val read = currentRecorder.read(buffer, 0, buffer.size)
             if (read < 0) {
                 Log.e("SoundDetector", "Read error: $read")
                 delay(50)
@@ -303,7 +351,8 @@ class SoundDetector @Inject constructor(
             var hpfSum = 0.0
             var peak = 0.0
             var zeroCrossings = 0
-            val floatBuffer = FloatArray(read)
+            // Reuse pre-allocated buffer, but be careful if read < windowSamples.
+            // We use 'read' as the limit for loops.
             
             for (i in 0 until read) {
                 val v = (buffer[i] - dcOffset).toFloat()
@@ -335,7 +384,9 @@ class SoundDetector @Inject constructor(
             val zcr = zeroCrossings.toFloat() / read.coerceAtLeast(1)
             
             // Calculate Spectral Features
-            val spectralFeatures = SoundUtils.calculateSpectralFeatures(floatBuffer, sampleRate)
+            // If read mismatch (rare), copy. Otherwise use pre-allocated buffer.
+            val inputForFft = if (read == floatBuffer.size) floatBuffer else floatBuffer.copyOfRange(0, read)
+            val spectralFeatures = SoundUtils.calculateSpectralFeatures(inputForFft, sampleRate)
             val centroid = spectralFeatures.centroid
             val tilt = spectralFeatures.tilt
 
@@ -344,21 +395,31 @@ class SoundDetector @Inject constructor(
                 flatlineCount++
                 if (flatlineCount >= maxFlatlineBeforeRestart) {
                     Log.w("SoundDetector", "Flatline detected, restarting recorder")
-                    recorder.stop() 
-                    recorder.release()
-                    recorder = AudioRecord(
-                        MediaRecorder.AudioSource.MIC,
-                        sampleRate,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        minBuffer
-                    )
-                    if (recorder.state == AudioRecord.STATE_INITIALIZED) {
-                        recorder.startRecording()
+                    currentRecorder.stop() 
+                    currentRecorder.release()
+                    val restarted = try {
+                        AudioRecord(
+                            MediaRecorder.AudioSource.MIC,
+                            sampleRate,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            minBuffer
+                        )
+                    } catch (e: SecurityException) {
+                        Log.e("SoundDetector", "Permission denied during recorder restart", e)
+                        running = false
+                        recorder = null
+                        return
+                    }
+                    currentRecorder = restarted
+                    recorder = restarted
+
+                    if (currentRecorder.state == AudioRecord.STATE_INITIALIZED) {
+                        currentRecorder.startRecording()
                         aec?.release()
                         try {
                             if (AcousticEchoCanceler.isAvailable()) {
-                                aec = AcousticEchoCanceler.create(recorder.audioSessionId)
+                                aec = AcousticEchoCanceler.create(currentRecorder.audioSessionId)
                                 aec?.enabled = true
                             }
                         } catch (e: Exception) {
@@ -373,7 +434,6 @@ class SoundDetector @Inject constructor(
                         aec?.release()
                         return
                     }
-                    continue
                 }
             } else {
                 flatlineCount = 0
@@ -553,17 +613,54 @@ class SoundDetector @Inject constructor(
                             }
                         }
                     }
+                    
+                    // 4. Pre-Event Variance Check (Chaos/Rattle Rejection)
+                    // If the signal BEFORE the event was highly variable, it's likely ongoing noise
+                    if (isValid) {
+                        val lookbackForVariance = 30 // 300ms lookback
+                        val gapFrames = 3
+                        val available = recentSamples.size
+                        
+                        val preEventValues = mutableListOf<Float>()
+                        for (j in gapFrames until lookbackForVariance) {
+                            if (available - 1 - j >= 0) {
+                                preEventValues.add(recentSamples[available - 1 - j])
+                            }
+                        }
+                        
+                        if (preEventValues.size >= 10) {
+                            val mean = preEventValues.average().toFloat()
+                            val variance = preEventValues.map { (it - mean) * (it - mean) }.average().toFloat()
+                            val stdDev = sqrt(variance)
+                            // Coefficient of Variation (normalized variance)
+                            val cv = if (mean > 0.001f) stdDev / mean else 0f
+                            
+                            if (cv > preEventVarianceMax) {
+                                rejectionReason = "Chaotic Pre-Event: CV=${"%.2f".format(cv)} > $preEventVarianceMax"
+                                Log.d("SoundDetector", "Rejected: $rejectionReason")
+                                isValid = false
+                            }
+                        }
+                    }
 
                     // Log Data for Analysis
-                    val typeLog = if (isValid && bestMatch != null) "DETECTED_${bestMatch.name.replace(" ", "_").uppercase()}" else "REJECTED"
+                    val typeLog = if (isValid && bestMatch != null) "PENDING_${bestMatch.name.replace(" ", "_").uppercase()}" else "REJECTED"
                     val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
                     val logEntry = "$timestamp,$debugContext,$typeLog,${"%.2f".format(bestConfidence)},$durationMs,${"%.4f".format(eventPeakRms)},${"%.4f".format(eventPeakRaw)},${"%.2f".format(avgZcr)},${"%.0f".format(avgCentroid)},${"%.2f".format(avgTilt)},${"%.3f".format(if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f)}|$rejectionReason"
                     Log.i("SoundAnalysis", logEntry)
 
                     if (isValid && bestMatch != null) {
-                        // CONFIRMED DETECTION
-                        Log.i("SoundDetector", "Detected ${bestMatch.name} (${(bestConfidence*100).toInt()}%)! Dur:$durationMs ms")
-                        val event = SoundDetectionEvent(
+                        // DEFER FINAL CONFIRMATION - Wait for post-event quiet check
+                        Log.d("SoundDetector", "Event passed pre-checks (${bestMatch.name}), waiting for post-event quiet...")
+                        
+                        // Only copy the samples needed for visualization (last 50 frames = 500ms)
+                        val sampleSnapshot = if (recentSamples.size > 50) {
+                            recentSamples.subList(recentSamples.size - 50, recentSamples.size).toList()
+                        } else {
+                            recentSamples.toList()
+                        }
+                        
+                        pendingEvent = SoundDetectionEvent(
                             timestampMs = eventStartTimestamp,
                             durationMs = durationMs,
                             strength = eventPeakRms,
@@ -572,34 +669,15 @@ class SoundDetector @Inject constructor(
                             centroid = avgCentroid,
                             tilt = avgTilt,
                             confidence = bestConfidence,
-                            samples = recentSamples.toList()
+                            samples = sampleSnapshot
                         )
-                        _state.update { current ->
-                            val updated = (listOf(event) + current.events).take(maxEvents)
-                            val updatedLogs = (current.logs + logEntry).takeLast(1000)
-                            current.copy(
-                                isLit = true,
-                                count = current.count + 1,
-                                lastStrength = eventPeakRms,
-                                lastPeak = eventPeakRaw,
-                                rms = rmsF,
-                                noiseFloor = noiseFloor,
-                                currentRms = rmsF,
-                                lastRejectionReason = null, 
-                                debugInfo = "${bestMatch.name} ${(bestConfidence*100).toInt()}%",
-                                events = updated,
-                                logs = updatedLogs
-                            )
-                        }
-                        litJob?.cancel()
-                        litJob = scope.launch {
-                            delay(100) // Flash light for 100ms
-                            _state.update { it.copy(isLit = false) }
-                        }
+                        pendingEventLogEntry = logEntry.replace("PENDING_", "DETECTED_")
+                        postEventCheckCountdown = postEventCheckFrames
+                        thresholdAtEventEnd = threshold
                     } else if (rejectionReason != null) {
                          // Update state with rejection reason to help debugging
                         _state.update { current ->
-                            val updatedLogs = (current.logs + logEntry).takeLast(1000)
+                            val updatedLogs = (current.logs + logEntry).takeLast(maxLogs)
                             current.copy(
                                 lastRejectionReason = rejectionReason,
                                 debugInfo = "Last Fail: $rejectionReason",
@@ -612,6 +690,68 @@ class SoundDetector @Inject constructor(
                 }
             } else {
                 // IDLE - Check for trigger
+                
+                // === POST-EVENT QUIET CHECK ===
+                if (postEventCheckCountdown > 0) {
+                    postEventCheckCountdown--
+                    
+                    if (postEventCheckCountdown == 0) {
+                        // Time to evaluate post-event quiet
+                        val pending = pendingEvent
+                        val logEntryForEvent = pendingEventLogEntry
+                        
+                        if (pending != null && logEntryForEvent != null) {
+                            // Check if current RMS is quiet enough
+                            val isQuiet = rmsF < thresholdAtEventEnd * postEventQuietRatio
+                            
+                            if (isQuiet) {
+                                // CONFIRMED DETECTION
+                                Log.i("SoundDetector", "Confirmed ${pending.type} (${(pending.confidence*100).toInt()}%)! Post-event quiet.")
+                                
+                                _state.update { current ->
+                                    val updated = (listOf(pending) + current.events).take(maxEvents)
+                                    val updatedLogs = (current.logs + logEntryForEvent).takeLast(maxLogs)
+                                    current.copy(
+                                        isLit = true,
+                                        count = current.count + 1,
+                                        lastStrength = pending.strength,
+                                        lastPeak = pending.peak,
+                                        rms = rmsF,
+                                        noiseFloor = noiseFloor,
+                                        currentRms = rmsF,
+                                        lastRejectionReason = null,
+                                        debugInfo = "${pending.type} ${(pending.confidence*100).toInt()}%",
+                                        events = updated,
+                                        logs = updatedLogs
+                                    )
+                                }
+                                litJob?.cancel()
+                                litJob = scope.launch {
+                                    delay(100)
+                                    _state.update { it.copy(isLit = false) }
+                                }
+                            } else {
+                                // REJECTED - Post-event still noisy (chaotic/rattling source)
+                                val postRejectReason = "Post-Event Noisy: ${"%.3f".format(rmsF)} > ${"%.3f".format(thresholdAtEventEnd * postEventQuietRatio)}"
+                                Log.d("SoundDetector", "Rejected: $postRejectReason")
+                                
+                                val rejectedLog = logEntryForEvent.replace("DETECTED_", "REJECTED_POST_") + "|$postRejectReason"
+                                _state.update { current ->
+                                    val updatedLogs = (current.logs + rejectedLog).takeLast(maxLogs)
+                                    current.copy(
+                                        lastRejectionReason = postRejectReason,
+                                        debugInfo = "Last Fail: $postRejectReason",
+                                        logs = updatedLogs
+                                    )
+                                }
+                            }
+                        }
+                        
+                        pendingEvent = null
+                        pendingEventLogEntry = null
+                    }
+                }
+                
                 // We use HPF RMS for the primary trigger to ignore low-frequency speech mud.
                 // However, we must allow "Broadband" triggers if they are potential Knocks (Very low ZCR).
                 // Or we effectively say "Snap/Slap detection requires HF energy".
@@ -682,10 +822,31 @@ class SoundDetector @Inject constructor(
             _state.update { current ->
                 current.copy(rms = rmsF, noiseFloor = noiseFloor, currentRms = rmsF)
             }
-        }
+        } 
+        } finally {
+            Log.d("SoundDetector", "Recording loop ended")
+            try {
+                if (currentRecorder.state == AudioRecord.STATE_INITIALIZED) {
+                    currentRecorder.stop()
+                }
+            } catch (e: Exception) {
+                Log.e("SoundDetector", "Error stopping recorder", e)
+            }
+            try {
+                currentRecorder.release()
+            } catch (e: Exception) {
+                Log.e("SoundDetector", "Error releasing recorder", e)
+            }
+            if (recorder == currentRecorder) {
+                recorder = null
+            }
 
-        Log.d("SoundDetector", "Recording loop ended")
-        recorder.stop()
-        recorder.release()
+            try {
+                aec?.release()
+                Log.d("SoundDetector", "AEC released")
+            } catch (e: Exception) {
+                Log.e("SoundDetector", "Error releasing AEC", e)
+            }
+        }
     }
 }

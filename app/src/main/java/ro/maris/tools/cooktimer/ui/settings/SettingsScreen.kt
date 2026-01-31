@@ -2,7 +2,7 @@ package ro.maris.tools.cooktimer.ui.settings
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -44,20 +42,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import android.widget.Toast
-import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
-import ro.maris.tools.cooktimer.audio.SoundDetectorState
 import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.model.ThemeMode
 
@@ -323,33 +317,33 @@ private fun ThemeModeDropdown(
     selectedMode: ThemeMode,
     onModeSelected: (ThemeMode) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(false) }
 
     ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it }
+        expanded = isExpanded,
+        onExpandedChange = { isExpanded = it }
     ) {
         OutlinedTextField(
             value = selectedMode.toDisplayString(),
             onValueChange = {},
             readOnly = true,
             label = { Text("Theme Mode") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
             modifier = Modifier
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
         )
         
         ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
+            expanded = isExpanded,
+            onDismissRequest = { isExpanded = false }
         ) {
             ThemeMode.entries.forEach { mode ->
                 DropdownMenuItem(
                     text = { Text(mode.toDisplayString()) },
                     onClick = {
                         onModeSelected(mode)
-                        expanded = false
+                        isExpanded = false
                     }
                 )
             }
@@ -363,11 +357,11 @@ private fun SoundTriggerTypeDropdown(
     selectedType: SettingsViewModel.SoundTriggerType,
     onTypeSelected: (SettingsViewModel.SoundTriggerType) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(false) }
 
     ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it }
+        expanded = isExpanded,
+        onExpandedChange = { isExpanded = it }
     ) {
         OutlinedTextField(
             value = when (selectedType) {
@@ -379,15 +373,15 @@ private fun SoundTriggerTypeDropdown(
             onValueChange = {},
             readOnly = true,
             label = { Text("Trigger Type") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
             modifier = Modifier
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
         )
         
         ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
+            expanded = isExpanded,
+            onDismissRequest = { isExpanded = false }
         ) {
             SettingsViewModel.SoundTriggerType.entries.forEach { type ->
                 DropdownMenuItem(
@@ -403,7 +397,7 @@ private fun SoundTriggerTypeDropdown(
                     },
                     onClick = {
                         onTypeSelected(type)
-                        expanded = false
+                        isExpanded = false
                     }
                 )
             }
@@ -417,33 +411,33 @@ private fun SoundTriggerActionDropdown(
     selectedAction: SoundTriggerAction,
     onActionSelected: (SoundTriggerAction) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(false) }
 
     ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it }
+        expanded = isExpanded,
+        onExpandedChange = { isExpanded = it }
     ) {
         OutlinedTextField(
             value = selectedAction.toDisplayString(),
             onValueChange = {},
             readOnly = true,
             label = { Text("Action") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
             modifier = Modifier
                 .fillMaxWidth()
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
         )
         
         ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
+            expanded = isExpanded,
+            onDismissRequest = { isExpanded = false }
         ) {
             SoundTriggerAction.entries.forEach { action ->
                 DropdownMenuItem(
                     text = { Text(action.toDisplayString()) },
                     onClick = {
                         onActionSelected(action)
-                        expanded = false
+                        isExpanded = false
                     }
                 )
             }
@@ -465,6 +459,7 @@ private fun SoundTriggerAction.toDisplayString(): String = when (this) {
     SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Start/Pause"
     SoundTriggerAction.PARSE -> "Parse"
 }
+
 @Composable
 private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit) {
     val detectorState by vm.detectorState.collectAsState()
@@ -603,28 +598,5 @@ private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SoundDetectionRow(strength: Float, peak: Float) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "Last detection:",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            text = "Strength: %.2f | Peak: %.2f".format(strength, peak),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
     }
 }

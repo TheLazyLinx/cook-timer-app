@@ -10,6 +10,7 @@ import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -19,6 +20,7 @@ interface VibrationHelper {
     fun vibrateTick()
     fun vibrateConfirm()
     fun vibrateVirtualKey()
+    fun release()
 }
 
 @Singleton
@@ -90,5 +92,9 @@ class AndroidVibrationHelper @Inject constructor(
         } else {
             vibrator.vibrate(VibrationEffect.createOneShot(20, VibrationEffect.DEFAULT_AMPLITUDE))
         }
+    }
+
+    override fun release() {
+        scope.cancel()
     }
 }

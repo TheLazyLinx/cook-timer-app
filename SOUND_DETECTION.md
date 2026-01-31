@@ -1,4 +1,4 @@
-# Sound Detection System (Architecture 3.1)
+# Sound Detection System (Architecture 3.2)
 
 ## Overview
 
@@ -30,13 +30,18 @@ Once triggered, the system monitors the sound's evolution over time to ensure it
 *   **Early Peak**: The loudest moment must be in the first 60ms. (Rejects "Swells" or "Groans" that ramp up slowly).
 *   **Duration Cap**: Sounds > 200ms are rejected. (Rejects dragging/sliding noises).
 
-### Step D: Spectral Profiling (The Fingerprint)
+### Step D: Chaos Rejection (Anti-Rattle)
+Random chaotic noise (pill bottles, keys jangling) can statistically align with a profile by chance. Two checks prevent this:
+1.  **Pre-Event Variance**: The 300ms *before* the event is analyzed for coefficient of variation (CV). If CV > 0.15, the signal was already chaotic - reject.
+2.  **Post-Event Quiet**: After the event ends, we wait 50ms and verify the signal has returned to quiet (<50% of threshold). If still noisy, it was part of ongoing chaos - reject.
+
+### Step E: Spectral Profiling (The Fingerprint)
 The isolated impact is analyzed for:
 1.  **Centroid (Center of Gravity)**: Must be > 800Hz. (Deep sounds are ignored).
 2.  **ZCR (Texture)**: Must be "noisy" enough (friction), but not *too* noisy (shushing).
 3.  **Tilt (Shape)**: Must be relatively flat. (Speech has a steep bass-heavy tilt).
 
-### Step E: Soft-Plateau Scoring
+### Step F: Soft-Plateau Scoring
 The sound is scored against profiles. 
 *   **Plateau**: If metrics fall *anywhere* in the valid range, Score = 100% (1.0).
 *   **Falloff**: Outside the range, the score decays effectively to 0.8 (80%).
@@ -73,6 +78,7 @@ The sound is scored against profiles.
 | **Table Bumps** | **Centroid**. Too deep (< 400Hz). |
 | **Shuffling** | **Attack Threshold**. Rises too slowly. |
 | **Audio Glitch** | **Sanity Check**. Detected via Digital Silence (0.0) history. |
+| **Pill Rattling / Chaotic Noise** | **Chaos Rejection**. Pre-event variance too high (CV > 0.15) OR post-event still noisy. |
 
 ---
 
@@ -83,10 +89,14 @@ The sound is scored against profiles.
 *   `thresholdMultiplier`: **4.0x** (Signal-to-Noise)
 *   `attackThreshold`: **2.0x** (Rise Ratio)
 *   `noiseAlphaFall`: **0.05** (Quick Recovery from loud events)
+*   `preEventVarianceMax`: **0.15** (Max coefficient of variation in pre-event window)
+*   `postEventCheckFrames`: **5** (50ms post-event quiet verification delay)
+*   `postEventQuietRatio`: **0.5** (Post-event must drop to <50% of threshold)
 
 ### Troubleshooting
 *   **Missed Snaps**: Ensure snap is sharp. Muffled/cloth snaps are filtered.
 *   **False Trigger**: Check "Isolation" score. Noisy rooms raise the bar automatically.
+*   **Rattling/Chaotic FPs**: Rejected by chaos detection (pre-event variance or post-event noise).
 
 ---
 
@@ -136,3 +146,26 @@ To simplify the user experience, detection complexity is abstracted into bundled
 ### Haptic Hierarchy
 1.  **System Master**: The app respects android `HAPTIC_FEEDBACK_ENABLED`. If the OS setting is off, the app stays silent tactilely.
 2.  **App Override**: Users can disable haptics specifically for the app without changing system settings.
+
+---
+
+## 7. Implementation Notes (Architecture 3.3 Update)
+
+### Resource Safety & Concurrency
+The audio engine (`SoundDetector`) operates on a dedicated IO thread to avoid blocking the UI.
+*   **Volatile State**: The `running` flag is marked `@Volatile` to ensure instant visibility of stop commands across threads.
+*   **Robust Cleanup**: The recording loop is wrapped in a `try...finally` block. This guarantees that `recorder.release()` and `aec.release()` are called even if the coroutine is cancelled (e.g., via `stop()` or app backgrounding), preventing "Microphone in use" errors or native resource leaks.
+*   **Blocking Read Protection**: `recorder` is now stored in a class-level variable, allowing `stop()` to explicitly call `release()`, which breaks any blocking `read()` operations in the background thread immediately.
+
+### Lifecycle Management
+Singleton services (`SoundDetector`, `SfxPlayer`, `VibrationHelper`) each manage their own `CoroutineScope`. To prevent memory leaks:
+*   **Application-level Cleanup**: `CookTimerApp` observes `ProcessLifecycleOwner` and calls `release()` on all singletons when the app process is destroyed.
+*   **Explicit Release Methods**: Each singleton exposes a `release()` method that cancels its internal scope and releases native resources (e.g., `SoundPool`, `AudioRecord`).
+*   **TimerEngine Ticker**: The ticker job now properly stops when the timer is idle (COMPLETED, PAUSED, or READY without stopwatch). It exits the loop naturally instead of spinning indefinitely with `continue`.
+
+### Performance Optimization
+*   **Allocations**: FFT buffer allocations (`FloatArray`) are moved outside the hot loop to minimize Garbage Collection (GC) pauses during processing.
+*   **Observation Strategy**: The `RunViewModel` separates settings observation (infrequent) from detector state observation (100Hz). This prevents the high-frequency detector updates from triggering expensive re-evaluations of startup logic.
+*   **Idle Ticks**: The `TimerReducer` now short-circuits tick events when the timer is not running, preventing ~1Hz UI recompositions during idle states.
+*   **Log Accumulation**: Detection logs are capped at 200 entries (down from 1000) to reduce memory footprint.
+*   **Event Sample Snapshots**: When storing detection events, only the last 50 RMS samples (500ms) are captured instead of the full 150-frame history, reducing per-event memory allocation.

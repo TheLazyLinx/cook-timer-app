@@ -175,37 +175,29 @@ object TimerReducer {
     }
 
     private fun onTick(state: RunState, nowEpochSec: Long): RunState {
+        // Optimization: If the timer is not in a state that evolves with time,
+        // do not return a new state object. This prevents unnecessary UI recompositions.
+        val isActive = state.phase == Phase.RUNNING || state.isStopwatchRunning
+        if (!isActive) {
+            return state
+        }
+        
         val step = state.activeStep ?: return state
         val dur = step.durationSec
-        if (state.phase == Phase.COMPLETED) {
-            return state.copy(nowEpochSec = nowEpochSec)
-        }
 
+        // The phase logic below handles transitions, but if we are just ticking time...
         if (state.phase == Phase.READY) {
-            return state.copy(
-                endsAtEpochSec = null,
-                pausedAtEpochSec = null,
-                stopwatchStartedAtEpochSec = state.stopwatchStartedAtEpochSec,
-                stopwatchAccumulatedSec = state.stopwatchAccumulatedSec,
-                stepCompleted = state.stepCompleted,
+            // READY but isStopwatchRunning must be true (checked by isActive)
+             return state.copy(
                 nowEpochSec = nowEpochSec
             )
         }
 
         if (dur == null) {
-            return state.copy(
-                phase = Phase.READY,
-                endsAtEpochSec = null,
-                pausedAtEpochSec = null,
-                stopwatchStartedAtEpochSec = state.stopwatchStartedAtEpochSec,
-                stopwatchAccumulatedSec = state.stopwatchAccumulatedSec,
-                stepCompleted = state.stepCompleted,
+            // Manual step running stopwatch
+             return state.copy(
                 nowEpochSec = nowEpochSec
             )
-        }
-
-        if (state.phase == Phase.PAUSED) {
-            return state.copy(nowEpochSec = nowEpochSec)
         }
 
         val endsAt = checkNotNull(state.endsAtEpochSec) { "endsAtEpochSec required to run a timed step" }
