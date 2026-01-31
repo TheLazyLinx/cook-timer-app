@@ -71,21 +71,26 @@ class RunViewModel @Inject constructor(
             }
         }
 
-        // Observe settings and sound detection
+        // Monitor settings to start/stop detection efficiently
+        viewModelScope.launch {
+            settingsRepository.observeSettings()
+                .collectLatest { settings ->
+                    if (settings.soundDetectionEnabled) {
+                        soundDetector.start()
+                    } else {
+                        soundDetector.stop()
+                    }
+                }
+        }
+
+        // Observe events and feedback
         viewModelScope.launch {
             combine(
                 settingsRepository.observeSettings(),
                 soundDetector.state
             ) { settings, detectorState ->
                 Pair(settings, detectorState)
-            }.collectLatest { (settings, detectorState) ->
-                // Start/stop sound detection based on settings
-                if (settings.soundDetectionEnabled) {
-                    soundDetector.start()
-                } else {
-                    soundDetector.stop()
-                }
-
+            }.collectLatest { (settings, detectorState) ->                
                 // Play failure sound if rejection reason changed
                 if (detectorState.lastRejectionReason != null &&
                     detectorState.lastRejectionReason != lastRejectionReason) {
