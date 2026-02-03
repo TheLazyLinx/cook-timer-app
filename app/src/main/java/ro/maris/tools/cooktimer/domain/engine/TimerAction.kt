@@ -10,5 +10,6 @@ sealed class TimerAction {
     data class ResumePressed(val nowEpochSec: Long) : TimerAction()
     object NextPressed : TimerAction()
     object BackPressed : TimerAction()
+    object LapPressed : TimerAction()
     data class ResetPressed(val nowEpochSec: Long) : TimerAction()
 }

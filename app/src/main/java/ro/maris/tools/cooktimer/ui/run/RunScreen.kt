@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.DisposableEffect
 import kotlinx.coroutines.delay
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.sfxClick
@@ -41,6 +42,13 @@ fun RunScreen(
     val detectorState by vm.detectorState.collectAsState()
     var showHelp by remember { mutableStateOf(true) }
     var lastState by remember { mutableStateOf(state) }
+
+    DisposableEffect(Unit) {
+        vm.onVisibilityChange(true)
+        onDispose {
+            vm.onVisibilityChange(false)
+        }
+    }
 
     LaunchedEffect(state) {
         val prev = lastState

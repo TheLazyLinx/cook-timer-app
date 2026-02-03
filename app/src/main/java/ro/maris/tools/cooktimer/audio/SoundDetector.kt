@@ -173,8 +173,12 @@ class SoundDetector @Inject constructor(
     private var recordJob: Job? = null
     private var litJob: Job? = null
     private var recorder: AudioRecord? = null
+    
+    private val consumers = mutableSetOf<String>()
 
-    fun start(): Boolean {
+    @Synchronized
+    fun start(consumerId: String = "Global"): Boolean {
+        consumers.add(consumerId)
         if (running) return true
         val permission = ContextCompat.checkSelfPermission(
             appContext,
@@ -190,7 +194,11 @@ class SoundDetector @Inject constructor(
         return true
     }
 
-    fun stop() {
+    @Synchronized
+    fun stop(consumerId: String = "Global") {
+        consumers.remove(consumerId)
+        if (consumers.isNotEmpty()) return
+        
         running = false
         recordJob?.cancel()
         recordJob = null
@@ -220,7 +228,10 @@ class SoundDetector @Inject constructor(
      * After calling release(), this SoundDetector instance should not be used again.
      */
     fun release() {
-        stop()
+        synchronized(this) {
+            consumers.clear()
+        }
+        stop("Global") // Force stop
         scope.cancel()
     }
 

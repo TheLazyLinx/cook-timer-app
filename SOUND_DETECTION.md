@@ -157,11 +157,21 @@ The audio engine (`SoundDetector`) operates on a dedicated IO thread to avoid bl
 *   **Robust Cleanup**: The recording loop is wrapped in a `try...finally` block. This guarantees that `recorder.release()` and `aec.release()` are called even if the coroutine is cancelled (e.g., via `stop()` or app backgrounding), preventing "Microphone in use" errors or native resource leaks.
 *   **Blocking Read Protection**: `recorder` is now stored in a class-level variable, allowing `stop()` to explicitly call `release()`, which breaks any blocking `read()` operations in the background thread immediately.
 
-### Lifecycle Management
-Singleton services (`SoundDetector`, `SfxPlayer`, `VibrationHelper`) each manage their own `CoroutineScope`. To prevent memory leaks:
+### Lifecycle Management (Reference Counting)
+The `SoundDetector` is a Singleton, but multiple screens (Timer, Stopwatch, Settings) may need to access microphone resources. To prevent race conditions where one screen stopping detection kills it for another active screen, the system uses **Reference Counting**:
+
+*   **Consumer Registration**: Components (ViewModels) call `start(consumerId: String)`.
+*   **Unique IDs**: Each ViewModel generates a unique UUID (`consumerId`) to identify its session.
+*   **Active Set**: `SoundDetector` maintains a `consumers: MutableSet<String>` of active listeners.
+*   **Lazy Activation**: The underlying `AudioRecord` thread only starts when the first consumer is added (count 0 -> 1).
+*   **Safe Shutdown**: The microphone is released ONLY when the last consumer removes itself (count -> 0). Calling `stop(consumerId)` removes only that specific listener.
+
+This ensures that navigating between the "Timer" tab and "Settings" tab (testing sound) maintains a stable audio session without resource thrashing or accidental "mute" states.
+
+### Process Cleanup
 *   **Application-level Cleanup**: `CookTimerApp` observes `ProcessLifecycleOwner` and calls `release()` on all singletons when the app process is destroyed.
 *   **Explicit Release Methods**: Each singleton exposes a `release()` method that cancels its internal scope and releases native resources (e.g., `SoundPool`, `AudioRecord`).
-*   **TimerEngine Ticker**: The ticker job now properly stops when the timer is idle (COMPLETED, PAUSED, or READY without stopwatch). It exits the loop naturally instead of spinning indefinitely with `continue`.
+*   **TimerEngine Ticker**: The ticker job now properly stops when the timer is idle.
 
 ### Performance Optimization
 *   **Allocations**: FFT buffer allocations (`FloatArray`) are moved outside the hot loop to minimize Garbage Collection (GC) pauses during processing.
