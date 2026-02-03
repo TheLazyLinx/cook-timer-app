@@ -6,8 +6,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavHostController
 import androidx.navigation.navArgument
+import ro.maris.tools.cooktimer.ui.timer.TimerScreen
+import ro.maris.tools.cooktimer.ui.timer.TimerViewModel
+import ro.maris.tools.cooktimer.ui.stopwatch.StopwatchScreen
+import ro.maris.tools.cooktimer.ui.stopwatch.StopwatchViewModel
 import ro.maris.tools.cooktimer.ui.edit.EditPresetScreen
 import ro.maris.tools.cooktimer.ui.edit.EditPresetViewModel
 import ro.maris.tools.cooktimer.ui.presets.PresetsListScreen
@@ -23,6 +27,8 @@ import ro.maris.tools.cooktimer.ui.soundwave.SoundwaveViewModel
 
 object Routes {
     const val PRESETS = "presets"
+    const val TIMER = "timer"
+    const val STOPWATCH = "stopwatch"
     const val EDIT = "edit"
     const val RUN = "run"
     const val SOUND_TEST = "sound_test"
@@ -32,10 +38,9 @@ object Routes {
 
 @Composable
 fun AppNavHost(
+    navController: NavHostController,
     modifier: Modifier = Modifier
 ) {
-    val navController = rememberNavController()
-
     NavHost(
         navController = navController,
         startDestination = Routes.PRESETS,
@@ -45,6 +50,7 @@ fun AppNavHost(
             val vm: PresetsListViewModel = hiltViewModel()
             PresetsListScreen(
                 vm = vm,
+                // onSettings logic might be removed from PresetsListScreen UI or redirected
                 onSettings = { navController.navigate(Routes.SETTINGS) },
                 onRun = { presetId ->
                     navController.navigate("${Routes.RUN}/$presetId") {
@@ -120,5 +126,14 @@ fun AppNavHost(
                 onBack = { navController.popBackStack() }
             )
         }
+        composable(Routes.TIMER) {
+            val vm: TimerViewModel = hiltViewModel()
+            TimerScreen(vm = vm)
+        }
+        composable(Routes.STOPWATCH) {
+            val vm: StopwatchViewModel = hiltViewModel()
+            StopwatchScreen(vm = vm)
+        }
     }
 }
+

@@ -42,6 +42,7 @@ class TimerEngine(
     }
     fun next() = dispatchAction(TimerAction.NextPressed)
     fun back() = dispatchAction(TimerAction.BackPressed)
+    fun lap() = dispatchAction(TimerAction.LapPressed)
     fun reset() {
         val now = timeProvider.nowEpochSec()
         dispatchAction(TimerAction.ResetPressed(now), now)

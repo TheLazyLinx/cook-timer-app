@@ -59,6 +59,16 @@ Step {
 }
 ```
 
+### Lap
+
+``` ts
+Lap {
+  index: number
+  lapTimeMs: number
+  splitTimeMs: number
+}
+```
+
 ### Run State (ephemeral)
 
 ``` ts
@@ -67,6 +77,8 @@ RunState {
   activeStepIndex: number
   phase: "ready" | "running" | "paused" | "completed"
   remainingSec: number
+  totalDurationMs: number // Stopwatch elapsed
+  laps: Lap[] // Stopwatch laps
   startedAtEpoch?: number
   micListening: boolean
   lastSoundTriggerEpoch: number

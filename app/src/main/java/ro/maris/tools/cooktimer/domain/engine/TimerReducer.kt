@@ -1,5 +1,6 @@
 package ro.maris.tools.cooktimer.domain.engine
 
+import ro.maris.tools.cooktimer.domain.model.Lap
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
 import ro.maris.tools.cooktimer.domain.model.StartMode
@@ -15,8 +16,39 @@ object TimerReducer {
             TimerAction.NextPressed -> onNext(state)
             TimerAction.BackPressed -> onBack(state)
             is TimerAction.ResetPressed -> onReset(state, action.nowEpochSec)
+            TimerAction.LapPressed -> onLap(state)
             is TimerAction.LoadPreset -> state // not used in Phase 1
         }
+    }
+
+    private fun onLap(state: RunState): RunState {
+        // Lap only valid if stopwatch is running or paused (for recording split)
+        // Or if we are in RUNNING state (for preset timer laps - but usually stopwatch)
+        // Requirement is "stopwatch should have a laps feature".
+        
+        // Check if we are in a stopwatch mode
+        val isStopwatch = state.activeStep?.durationSec == null
+        if (!isStopwatch) return state // Ignore lap for timed steps for now, unless requested.
+
+        // Calculate current total elapsed time
+        val currentElapsed = state.stopwatchElapsedSec ?: 0
+        if (currentElapsed == 0 && state.laps.isEmpty()) return state // Don't lap at 0
+        
+        // Calculate lap duration. 
+        // Total elapsed - sum of previous laps?
+        // Actually, if we store splitTimeSec in Lap, lapTime = splitTime - prevSplitTime.
+        val lastSplit = state.laps.lastOrNull()?.splitTimeSec ?: 0
+        val lapDuration = currentElapsed - lastSplit
+
+        val newLap = Lap(
+            index = state.laps.size + 1,
+            splitTimeSec = currentElapsed,
+            lapTimeSec = lapDuration
+        )
+        
+        return state.copy(
+            laps = state.laps + newLap
+        )
     }
 
     private fun onStart(state: RunState, nowEpochSec: Long): RunState {
@@ -251,6 +283,7 @@ object TimerReducer {
             pausedAtEpochSec = null,
             stopwatchStartedAtEpochSec = null,
             stopwatchAccumulatedSec = 0,
+            laps = emptyList(),
             stepCompleted = false,
             nowEpochSec = nowEpochSec
         )

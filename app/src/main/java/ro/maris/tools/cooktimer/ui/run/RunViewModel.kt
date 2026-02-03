@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -19,6 +20,7 @@ import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
+import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
@@ -41,11 +43,16 @@ class RunViewModel @Inject constructor(
 
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
+    private val _isScreenVisible = MutableStateFlow(false)
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
 
     private var lastDetectionTimestamp = 0L
     private val minDetectionIntervalMs = 1000L
+
+    fun onVisibilityChange(visible: Boolean) {
+        _isScreenVisible.value = visible
+    }
 
     fun start() = engine.start()
     fun pause() = engine.pause()
@@ -58,6 +65,8 @@ class RunViewModel @Inject constructor(
         vibrationHelper.vibrateVirtualKey()
         // Wiring for future lap logic
     }
+
+    private val consumerId = "RunViewModel-${UUID.randomUUID()}"
 
     init {
         if (presetId != null) {
@@ -73,35 +82,43 @@ class RunViewModel @Inject constructor(
 
         // Monitor settings to start/stop detection efficiently
         viewModelScope.launch {
-            settingsRepository.observeSettings()
-                .collectLatest { settings ->
-                    if (settings.soundDetectionEnabled) {
-                        soundDetector.start()
-                    } else {
-                        soundDetector.stop()
-                    }
+            combine(
+                settingsRepository.observeSettings(),
+                _isScreenVisible
+            ) { settings, visible ->
+                Pair(settings, visible)
+            }.collectLatest { (settings, visible) ->
+                if (settings.soundDetectionEnabled && visible) {
+                    soundDetector.start(consumerId)
+                    val presetName = state.value?.presetName ?: "Run"
+                    soundDetector.debugContext = presetName
+                } else {
+                    soundDetector.stop(consumerId)
                 }
+            }
         }
 
         // Observe events and feedback
         viewModelScope.launch {
             combine(
                 settingsRepository.observeSettings(),
-                soundDetector.state
-            ) { settings, detectorState ->
-                Pair(settings, detectorState)
-            }.collectLatest { (settings, detectorState) ->                
+                soundDetector.state,
+                _isScreenVisible
+            ) { settings, detectorState, isVisible ->
+                Triple(settings, detectorState, isVisible)
+            }.collectLatest { (settings, detectorState, isVisible) ->                
                 // Play failure sound if rejection reason changed
                 if (detectorState.lastRejectionReason != null &&
                     detectorState.lastRejectionReason != lastRejectionReason) {
-                    if (settings.soundDetectionEnabled) {
+                    if (isVisible && settings.soundDetectionEnabled) {
                         sfxPlayer.play(SfxId.DetectionFailed)
                     }
                 }
                 lastRejectionReason = detectorState.lastRejectionReason
 
                 // Handle sound triggers
-                if (settings.soundDetectionEnabled && 
+                if (isVisible && 
+                    settings.soundDetectionEnabled && 
                     settings.soundTriggerAction != SoundTriggerAction.NONE &&
                     detectorState.isLit) {
                     
@@ -175,6 +192,6 @@ class RunViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        soundDetector.stop()
+        soundDetector.stop(consumerId)
     }
 }

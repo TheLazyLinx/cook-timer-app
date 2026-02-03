@@ -8,6 +8,11 @@ CookTimer2 is a simple, reliable cooking timer that focuses on **processes**, no
 
 ## Features
 
+- **Multi-Mode Operation**:
+  - **Presets**: Create and run custom flows with multiple steps (e.g., "Boil", "Bake").
+  - **Quick Timer**: Simple countdown timer with a custom duration picker.
+  - **Stopwatch**: Standard stopwatch with **Lap** functionality.
+- **Improved Navigation**: Tab-based interface (Presets, Timer, Stopwatch, Settings).
 - **Preset Management**: Create, edit, and run custom timer presets with multiple steps
 - **Step Configuration**: 
   - Timed steps with customizable durations
@@ -15,11 +20,11 @@ CookTimer2 is a simple, reliable cooking timer that focuses on **processes**, no
   - Auto or manual start modes per step
   - Optional notes for each step
 - **Timer Engine**: State machine-based timer with start/pause/resume/next/back controls
-- **Sound Gesture Control**: Optional hands-free slap/knock detection for timer control
+- **Sound Gesture Control**: Optional hands-free slap/knock detection for timer control. Now supports safe multi-screen usage.
 - **Haptic Feedback**:
   - Vibration confirmation for state transitions (user actions, timer completion, step changes)
   - "Clock Tick" feedback for valid sound triggers
-  - Virtual key feedback for future functionality (Lap)
+  - Virtual key feedback for "Lap" and "Picker" interactions.
 - **Dark/Light Theme**: System-aware theming with manual override
 - **Local Storage**: Room database for persistent preset storage
 - **Built-in Presets**: Pre-configured templates that can be copied and customized
@@ -45,12 +50,18 @@ app/src/main/java/ro/maris/tools/cooktimer/
 │   │   └── entity/        # Room entities (PresetEntity, StepEntity)
 │   └── repository/        # Repository implementation (RoomPresetRepository)
 ├── ui/
+│   ├── main/              # Main scaffold with Bottom Navigation
 │   ├── presets/           # Presets list screen and ViewModel
 │   ├── edit/              # Preset editor screen and ViewModel
-│   ├── run/               # Timer running screen and ViewModel
-│   ├── sound/             # Sound test screen and ViewModel│   │   ├── haptics/           # Vibration helper and implementation│   ├── theme/             # Material3 theming (Color, Type, Theme)
+│   ├── run/               # Preset execution screen and ViewModel
+│   ├── timer/             # Quick Timer screen and ViewModel
+│   ├── stopwatch/         # Stopwatch screen and ViewModel
+│   ├── settings/          # Settings screen and ViewModel
+│   ├── sound/             # Sound test components
+│   │   ├── haptics/       # Vibration helper and implementation
+│   ├── theme/             # Material3 theming (Color, Type, Theme)
 │   └── navigation/        # Navigation setup (AppNavHost, Routes)
-├── audio/                 # Sound effects player and detector
+├── audio/                 # Sound effects player and detector (Reference Counting)
 └── di/                    # Dependency injection modules (Hilt)
 ```
 
@@ -59,9 +70,9 @@ app/src/main/java/ro/maris/tools/cooktimer/
 - **UI**: Jetpack Compose with Material3
 - **Architecture**: MVVM with ViewModels and StateFlow
 - **Dependency Injection**: Hilt/Dagger
-- **Navigation**: Jetpack Navigation Compose
+- **Navigation**: Jetpack Navigation Compose (Tab-based)
 - **Database**: Room with SQLite
-- **Audio**: AudioRecord for sound detection, SoundPool for effects
+- **Audio**: AudioRecord (Singleton with Ref-Counting), SoundPool
 - **Haptics**: Android VibrationEffect and VibratorManager
 - **Build**: Gradle with Kotlin DSL, KSP for annotation processing
 
@@ -71,22 +82,23 @@ app/src/main/java/ro/maris/tools/cooktimer/
 
 - **Preset**: Reusable timing flow with ordered steps
 - **Step**: Individual stage with duration, start mode, and optional notes
-- **RunState**: Ephemeral timer state tracking current step, phase, and time
+- **RunState**: Ephemeral timer state tracking current step, phase, time, and **laps**.
 - **Phase**: Timer state enum (READY, RUNNING, PAUSED, COMPLETED)
 
 ### Timer Engine
 
 State machine-based engine using a reducer pattern:
-- Processes actions (Tick, Start, Pause, Resume, Next, Back, etc.)
+- Processes actions (Tick, Start, Pause, Resume, Next, Back, Lap, etc.)
 - Maintains immutable state transitions
 - Handles step progression and auto-start logic
 
-### UI Screens
+### UI Screen Structure
 
-1. **Presets List**: Browse built-in and custom presets, create new ones
-2. **Edit Preset**: Add/edit/reorder steps, configure step properties
-3. **Run Timer**: Execute a preset with timer controls and sound gestures
-4. **Sound Test**: Test and visualize sound detection sensitivity
+The app uses a `MainScreen` scaffold with a bottom navigation bar:
+1. **Presets**: Browse built-in and custom presets.
+2. **Timer**: Quick countdown timer.
+3. **Stopwatch**: Standard stopwatch with laps.
+4. **Settings**: App preferences (Sound, Theme).
 
 ## Requirements
 

@@ -5,19 +5,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
 import dagger.hilt.android.AndroidEntryPoint
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxPlayer
 import ro.maris.tools.cooktimer.domain.model.ThemeMode
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
-import ro.maris.tools.cooktimer.ui.navigation.AppNavHost
+import ro.maris.tools.cooktimer.ui.MainScreen
 import ro.maris.tools.cooktimer.ui.theme.CookTimerTheme
 import javax.inject.Inject
 
@@ -41,11 +37,7 @@ class MainActivity : ComponentActivity() {
             
             CompositionLocalProvider(LocalSfxPlayer provides sfxPlayer) {
                 CookTimerTheme(darkTheme = isDarkTheme) {
-                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                        AppNavHost(
-                            modifier = Modifier.fillMaxSize().padding(innerPadding)
-                        )
-                    }
+                    MainScreen()
                 }
             }
         }

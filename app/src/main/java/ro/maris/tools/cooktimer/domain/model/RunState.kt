@@ -10,6 +10,7 @@ data class RunState(
     val pausedAtEpochSec: Long?, // non-null only while paused
     val stopwatchStartedAtEpochSec: Long?, // non-null when stopwatch running
     val stopwatchAccumulatedSec: Int, // accumulated when stopwatch is paused
+    val laps: List<Lap> = emptyList(),
     val stepCompleted: Boolean, // true when a step finished and awaits manual advance
     val nowEpochSec: Long
 ) {
@@ -63,6 +64,7 @@ data class RunState(
                 pausedAtEpochSec = null,
                 stopwatchStartedAtEpochSec = null,
                 stopwatchAccumulatedSec = 0,
+                laps = emptyList(),
                 stepCompleted = false,
                 nowEpochSec = nowEpochSec
             )
