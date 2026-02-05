@@ -43,6 +43,7 @@ class RunViewModel @Inject constructor(
 
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
+    val settings = settingsRepository.observeSettings()
     private val _isScreenVisible = MutableStateFlow(false)
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
@@ -64,6 +65,12 @@ class RunViewModel @Inject constructor(
     fun lap() {
         vibrationHelper.vibrateVirtualKey()
         // Wiring for future lap logic
+    }
+
+    fun markHelpAsShown() {
+        viewModelScope.launch {
+            settingsRepository.setHasShownSoundHelpOverlay(true)
+        }
     }
 
     private val consumerId = "RunViewModel-${UUID.randomUUID()}"

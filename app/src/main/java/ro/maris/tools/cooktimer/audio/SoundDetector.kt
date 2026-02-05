@@ -80,7 +80,7 @@ class SoundDetector @Inject constructor(
     private val confidenceThreshold = 0.78f // Raised from 0.75 to 0.78 to cut marginal Speech FPs (like the 76% one)
     
     // Chaos Rejection (Pill Rattle, Continuous Noise)
-    private val preEventVarianceMax = 0.15f // Reject if pre-event coefficient of variation is too high
+    private val preEventVarianceMax = 0.25f // Increased from 0.15f to allow quick retries after failed snaps
     private val postEventCheckFrames = 5 // Wait 50ms after event ends to verify quiet
     private val postEventQuietRatio = 0.5f // Post-event RMS must drop below 50% of threshold
     

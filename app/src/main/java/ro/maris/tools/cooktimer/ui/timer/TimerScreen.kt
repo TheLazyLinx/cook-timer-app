@@ -42,7 +42,16 @@ fun TimerScreen(
 
     val sfx = LocalSfxPlayer.current
     val detectorState by vm.detectorState.collectAsState()
-    var showHelp by remember { mutableStateOf(false) } // Default to false for these screens? User said copy logic. RunScreen had true by default. I will stick to RunScreen logic if unclear, but "Presets" context made sense for help. "Timer" might not. I will keep it but maybe default false.
+    val settings by vm.settings.collectAsState(initial = null)
+    var showHelp by remember { mutableStateOf(false) }
+    
+    // Show help if not shown before
+    LaunchedEffect(settings) {
+        if (settings?.hasShownSoundHelpOverlay == false) {
+            showHelp = true
+        }
+    }
+    
     var lastState by remember { mutableStateOf(state) }
 
     DisposableEffect(Unit) {
@@ -325,7 +334,10 @@ fun TimerScreen(
             }
         }
         if (showHelp) {
-            StarterHelpOverlay(onDismiss = { showHelp = false })
+            StarterHelpOverlay(onDismiss = { 
+                showHelp = false
+                vm.markHelpAsShown()
+            })
         }
     }
 }
