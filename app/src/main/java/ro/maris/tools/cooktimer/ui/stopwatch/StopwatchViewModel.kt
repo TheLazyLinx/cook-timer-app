@@ -46,6 +46,7 @@ class StopwatchViewModel @Inject constructor(
 
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
+    val settings = settingsRepository.observeSettings()
     private val _isScreenVisible = MutableStateFlow(false)
 
     private var lastDetectionTimestamp = 0L
@@ -65,6 +66,12 @@ class StopwatchViewModel @Inject constructor(
     fun lap() {
         vibrationHelper.vibrateVirtualKey()
         engine.lap()
+    }
+
+    fun markHelpAsShown() {
+        viewModelScope.launch {
+            settingsRepository.setHasShownSoundHelpOverlay(true)
+        }
     }
 
     private val consumerId = "StopwatchViewModel-${UUID.randomUUID()}"

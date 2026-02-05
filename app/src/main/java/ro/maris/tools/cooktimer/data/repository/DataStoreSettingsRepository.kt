@@ -33,6 +33,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val SOUND_TRIGGER_ACTION = stringPreferencesKey("sound_trigger_action")
         val ALLOWED_SOUND_PROFILES = stringSetPreferencesKey("allowed_sound_profiles")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val HAS_SHOWN_SOUND_HELP_OVERLAY = booleanPreferencesKey("has_shown_sound_help_overlay")
     }
 
     override fun observeSettings(): Flow<AppSettings> {
@@ -48,7 +49,8 @@ class DataStoreSettingsRepository @Inject constructor(
                     ?: setOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap", "Knock", "Stomp"),
                 themeMode = preferences[Keys.THEME_MODE]
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
-                    ?: ThemeMode.SYSTEM
+                    ?: ThemeMode.SYSTEM,
+                hasShownSoundHelpOverlay = preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] ?: false
             )
         }
     }
@@ -90,6 +92,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { preferences ->
             preferences[Keys.THEME_MODE] = mode.name
+        }
+    }
+
+    override suspend fun setHasShownSoundHelpOverlay(hasShown: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] = hasShown
         }
     }
 }

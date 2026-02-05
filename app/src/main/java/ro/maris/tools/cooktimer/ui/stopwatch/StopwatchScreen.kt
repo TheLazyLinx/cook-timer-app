@@ -44,7 +44,16 @@ fun StopwatchScreen(
 
     val sfx = LocalSfxPlayer.current
     val detectorState by vm.detectorState.collectAsState()
-    var showHelp by remember { mutableStateOf(false) } 
+    val settings by vm.settings.collectAsState(initial = null)
+    var showHelp by remember { mutableStateOf(false) }
+    
+    // Show help if not shown before
+    LaunchedEffect(settings) {
+        if (settings?.hasShownSoundHelpOverlay == false) {
+            showHelp = true
+        }
+    }
+    
     var lastState by remember { mutableStateOf(state) }
 
     DisposableEffect(Unit) {
@@ -302,7 +311,10 @@ fun StopwatchScreen(
             }
         }
         if (showHelp) {
-            StarterHelpOverlay(onDismiss = { showHelp = false })
+            StarterHelpOverlay(onDismiss = { 
+                showHelp = false
+                vm.markHelpAsShown()
+            })
         }
     }
 }
