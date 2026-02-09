@@ -305,26 +305,28 @@ fun CircularSegmentedProgress(
                         inactiveColor
                     }
                     
-                    // Diamond shape for ticks
+                    // Hexagon shape for ticks
                     val path = Path().apply {
-                         // Centered at top of circle (approx)
-                         // Width tickWidth, Height tickLen
-                         // To make diamond:
-                         // Top: (0, -radius)
-                         // Right: (width/2, -radius + len/2)
-                         // Bottom: (0, -radius + len)
-                         // Left: (-width/2, -radius + len/2)
-                         
                          val topY = center.y - radius
-                         val midY = topY + tickLen / 2
                          val botY = topY + tickLen
                          val midX = center.x
-                         val halfW = tickWidth / 2
                          
-                         moveTo(midX, topY)
-                         lineTo(midX + halfW, midY)
-                         lineTo(midX, botY)
-                         lineTo(midX - halfW, midY)
+                         // Create hexagon relative to (center.x, center.y-radius)
+                         // We need a helper or inline it.
+                         // Hexagon in box (x-halfW, topY) to (x+halfW, botY)
+                         val w = tickWidth
+                         val h = tickLen
+                         val cx = midX
+                         val cy = topY + h/2
+                         val halfW = w/2
+                         val tipH = w/2 // 45 degrees
+                         
+                         moveTo(cx, topY) // Top Tip
+                         lineTo(cx + halfW, topY + tipH) // Top Right
+                         lineTo(cx + halfW, botY - tipH) // Bot Right
+                         lineTo(cx, botY) // Bot Tip
+                         lineTo(cx - halfW, botY - tipH) // Bot Left
+                         lineTo(cx - halfW, topY + tipH) // Top Left
                          close()
                     }
                     
