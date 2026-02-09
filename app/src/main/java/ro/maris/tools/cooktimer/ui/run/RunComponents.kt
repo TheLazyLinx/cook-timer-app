@@ -19,6 +19,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import ro.maris.tools.cooktimer.audio.SoundDetectorState
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import kotlinx.coroutines.delay
+
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material3.Icon
 
 @Composable
 fun SoundDetectionIndicator(
@@ -59,6 +65,35 @@ fun SoundDetectionIndicator(
         label = "borderFlash"
     )
 
+    val infiniteTransition = rememberInfiniteTransition(label = "breathing")
+    val breathingAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathingAlpha"
+    )
+    
+    // Error message fading logic
+    val errorMessage = remember(state.lastRejectionReason) {
+         if (state.lastRejectionReason != null) {
+              getFriendlyRejectionMessage(state.lastRejectionReason!!)
+         } else null
+    }
+    
+    var visibleError by remember { mutableStateOf<String?>(null) }
+    
+    LaunchedEffect(errorMessage) {
+        if (errorMessage != null) {
+            visibleError = errorMessage
+            // Fade after 15 seconds
+            delay(15000)
+            visibleError = null
+        }
+    }
+
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -86,7 +121,7 @@ fun SoundDetectionIndicator(
                 val leftCenter = circleRadius + travel
                 val rightCenter = (w - circleRadius) - travel
                 
-                val color = SoftRed
+                val color = if (state.isLit) SoftRed else SoftRed.copy(alpha = breathingAlpha)
                 
                 drawCircle(
                     color = color,
@@ -102,31 +137,40 @@ fun SoundDetectionIndicator(
             }
         }
         
-        // Feedback Text
-        if (state.lastRejectionReason != null && !state.isLit) {
-            val message = getFriendlyRejectionMessage(state.lastRejectionReason)
-            Text(
-                text = message,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center
+        Row(
+            verticalAlignment = Alignment.CenterVertically, 
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Mic,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.6f),
+                modifier = Modifier.size(16.dp)
             )
-        } else if (state.isLit) {
-             // Extract type from debugInfo (e.g. "Snap (High) 85%" -> "Snap")
-             val type = state.debugInfo.substringBefore(" ").take(10)
-             Text(
-                text = "Detected: $type",
-                style = MaterialTheme.typography.labelMedium,
-                color = SoftRed,
-                textAlign = TextAlign.Center
-            )
-        } else {
-             Text(
-                text = "Listening...",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.5f),
-                textAlign = TextAlign.Center
-            )
+            
+            if (visibleError != null && !state.isLit) {
+                Text(
+                    text = ":  $visibleError",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+            } else if (state.isLit) {
+                 val type = state.debugInfo.substringBefore(" ").take(10)
+                 Text(
+                    text = ":  Detected: $type",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SoftRed,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                 Text(
+                    text = "Listening...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=0.5f),
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
