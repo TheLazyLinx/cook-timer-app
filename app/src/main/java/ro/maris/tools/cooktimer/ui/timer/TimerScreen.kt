@@ -2,6 +2,8 @@ package ro.maris.tools.cooktimer.ui.timer
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -24,7 +26,12 @@ import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 import ro.maris.tools.cooktimer.ui.run.StarterHelpOverlay
-import ro.maris.tools.cooktimer.ui.run.SoundDetectionIndicator
+import ro.maris.tools.cooktimer.ui.run.RetroSoundIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
 @Composable
 fun TimerScreen(
@@ -87,16 +94,36 @@ fun TimerScreen(
     val next = state.nextStep
 
     val isDarkTheme = isSystemInDarkTheme()
-    val accentButtonColors = ButtonDefaults.buttonColors(
-        containerColor = SoftRed,
-        contentColor = Color.White
-    )
-    val accentTextButtonColors = ButtonDefaults.textButtonColors(
-        contentColor = SoftRed
-    )
     val timerTextStyle = MaterialTheme.typography.displayLarge.copy(
         fontFamily = FontFamily.Monospace
     )
+    val mainActionColor = SoftRed
+    val secondaryActionColor = MaterialTheme.colorScheme.primary
+    val buttonBgColor = MaterialTheme.colorScheme.surface
+
+    // Helper for styled buttons
+    @Composable
+    fun ActionButton(
+        onClick: () -> Unit,
+        icon: @Composable () -> Unit,
+        isPrimary: Boolean = true,
+        size: androidx.compose.ui.unit.Dp = 80.dp
+    ) {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = Modifier.size(size),
+            shape = CircleShape, 
+            border = BorderStroke(if (isPrimary) 3.dp else 2.dp, if (isPrimary) mainActionColor else secondaryActionColor),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = buttonBgColor,
+                contentColor = if (isPrimary) mainActionColor else secondaryActionColor
+            ),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            icon()
+        }
+    }
+
     // Back navigation logic from RunScreen: canGoBack is step index > 0.
     // In simple Timer/Stopwatch with 1 step, this will likely be false.
     val canGoBack = state.activeStepIndex > 0
@@ -130,45 +157,66 @@ fun TimerScreen(
                     )
                 }
             } else {
-                val timerText = when {
-                    state.phase == Phase.RUNNING -> "Remaining: ${formatTime(requireNotNull(state.remainingSec))}"
-                    state.isStopwatchRunning -> "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
+                val (timerLabel, timerValue) = when {
+                    state.phase == Phase.RUNNING -> "Remaining" to formatTime(requireNotNull(state.remainingSec))
+                    state.isStopwatchRunning -> "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
                     state.phase == Phase.PAUSED -> {
                         val label = if (step?.durationSec != null) "Remaining" else "Elapsed"
                         val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
-                        "$label: ${formatTime(timeValue)}"
+                         label to formatTime(timeValue)
                     }
                     state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
-                        "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
-                    state.phase == Phase.READY -> "Ready" // Should be covered by isEditable logic unless isReadyToAdvance
-                    else -> ""
+                        "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
+                    state.phase == Phase.READY -> "" to "READY"
+                    else -> "" to ""
                 }
                 
-                // Show standard text
+                val progress = if ((state.phase == Phase.RUNNING || state.phase == Phase.PAUSED) && step?.durationSec != null) {
+                    val total = step.durationSec.toFloat()
+                    val current = state.remainingSec?.toFloat() ?: state.pausedRemainingSec?.toFloat() ?: 0f
+                    (current / total).coerceIn(0f, 1f)
+                } else if (state.isStopwatchRunning) {
+                     val sec = state.stopwatchElapsedSec ?: 0
+                     (sec % 60) / 60f
+                } else {
+                    1f
+                }
+
                 Box(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = timerText,
-                            style = timerTextStyle,
-                            color = if (isDarkTheme && (state.phase == Phase.RUNNING || state.isStopwatchRunning)) {
-                                SoftRed
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
+                      ro.maris.tools.cooktimer.ui.run.CircularSegmentedProgress(
+                        progress = progress,
+                        modifier = Modifier.size(240.dp),
+                        activeColor = SoftRed
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                             ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                                text = timerValue,
+                                modifier = Modifier.width(180.dp),
+                                segmentColor = SoftRed
+                            )
+                            if (timerLabel.isNotEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = timerLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                        )
-                        Text(
-                            text = when (state.phase) {
-                                Phase.READY -> "READY"
-                                Phase.RUNNING -> "RUNNING"
-                                Phase.PAUSED -> "PAUSED"
-                                Phase.COMPLETED -> "COMPLETED"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
+                             Spacer(Modifier.height(4.dp))
+                             Text(
+                                text = when (state.phase) {
+                                    Phase.READY -> "READY"
+                                    Phase.RUNNING -> "RUNNING"
+                                    Phase.PAUSED -> "PAUSED"
+                                    Phase.COMPLETED -> "COMPLETED"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        }
                     }
                 }
             }
@@ -186,7 +234,7 @@ fun TimerScreen(
                 }
             }
 
-            SoundDetectionIndicator(
+            RetroSoundIndicator(
                 state = detectorState, 
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
             )
@@ -229,107 +277,114 @@ fun TimerScreen(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Back logic mainly for multi-step
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Left Slot: Back (if stack available)
                     if (canGoBack) {
-                       OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.back() }) { Text("Back") }
+                       ActionButton(
+                           onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.back() },
+                           icon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") },
+                           isPrimary = false,
+                           size = 64.dp
+                       )
+                    } else {
+                        // Or if timer is running and we want Reset on left?
+                        // Requirement: Start/Pause/Restart and Reset.
+                        // Usually Reset is on the side. 
+                        // If Running/Paused, Right Slot can be Reset?
+                        // Let's stick to Right Slot for Reset.
+                        Spacer(Modifier.size(64.dp))
                     }
-                    val isLastStep = next == null
-                    val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
-                    val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
-                    val nextAction = if (showRestart) vm::reset else vm::next
-                    // Hide "Next" logic if it's a single step timer/stopwatch and we are just running/stopping?
-                    // But "Stop" is handled here for last step.
-                    // If it is the last step (which it is for single step), nextLabel is "Stop".
-                    // But wait, "Stop" action is vm::next ?
-                    // In RunViewModel, next() advances. If it's last step, next() completes it?
-                    // Let's stick to the copied logic.
                     
-                    // Actually, if it is running, the main button below handles "Stop" or "Next".
-                    // This row is for auxiliary nav? 
-                    // In RunScreen:
-                    // Row contains "Back" and "Next/Stop/Restart" secondary buttons?
-                    // No, look at RunScreen again.
-                    /*
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = ..., enabled = canGoBack) { Text("Back") }
-                        ...
-                        OutlinedButton(onClick = ...) { Text(nextLabel) }
-                    }
-                    */
-                    // And then below that, there is the big Primary Button.
-                    
-                    OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { nextAction() }, modifier = Modifier.weight(1f)) { Text(nextLabel) }
-                }
+                    Spacer(Modifier.width(24.dp))
 
-                when (state.phase) {
-                    Phase.READY -> {
-                        val isLastStep = next == null
-                        val action = when {
-                            state.isReadyToAdvance -> if (isLastStep) vm::reset else vm::next
-                            state.isStopwatchRunning -> vm::next
-                            step?.startMode == StartMode.MANUAL || step?.durationSec == null -> vm::start
-                            else -> vm::start
+                    // Center Slot (Main Toggle)
+                     when (state.phase) {
+                        Phase.READY -> {
+                             // Start or Restart
+                             val isLastStep = next == null
+                             // If isReadyToAdvance, it means we ran and finished?
+                             // But for Single Step Timer, phase goes to COMPLETED usually?
+                             // vm.start()
+                             
+                             // If just opened: Phase.READY -> Play
+                             // If we finished a loop? Phase.COMPLETED -> Refresh
+                             
+                             // logic from before:
+                             val readyToAdvance = state.isReadyToAdvance
+                             val stopwatchRunning = state.isStopwatchRunning
+                             
+                             if (stopwatchRunning) { 
+                                 // Pause
+                                 ActionButton(
+                                     onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() },
+                                     icon = { Icon(Icons.Default.Pause, "Pause") },
+                                     isPrimary = true,
+                                     size = 80.dp
+                                 )
+                             } else if (readyToAdvance) {
+                                 // Done? Refresh
+                                 ActionButton(
+                                     onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
+                                     icon = { Icon(Icons.Default.Refresh, "Restart") },
+                                     isPrimary = true,
+                                     size = 80.dp
+                                 )
+                             } else {
+                                 // Start
+                                 ActionButton(
+                                     onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.start() },
+                                     icon = { Icon(Icons.Default.PlayArrow, "Start") },
+                                     isPrimary = true,
+                                     size = 80.dp
+                                 )
+                             }
                         }
-                        val label = when {
-                            state.isReadyToAdvance -> if (isLastStep) "Restart" else "Next"
-                            state.isStopwatchRunning -> if (isLastStep) "Stop" else "Next"
-                            step?.startMode == StartMode.MANUAL || step?.durationSec == null -> "Start"
-                            else -> "Start"
+                        Phase.RUNNING -> {
+                            ActionButton(
+                                onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() },
+                                icon = { Icon(Icons.Default.Pause, "Pause") },
+                                isPrimary = true,
+                                size = 80.dp
+                            )
                         }
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { action() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
+                        Phase.PAUSED -> {
+                             ActionButton(
+                                onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.resume() },
+                                icon = { Icon(Icons.Default.PlayArrow, "Resume") },
+                                isPrimary = true,
+                                size = 80.dp
+                            )
                         }
-                        if (state.isStopwatchRunning) {
-                            OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Pause")
-                            }
+                        Phase.COMPLETED -> {
+                             ActionButton(
+                                onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
+                                icon = { Icon(Icons.Default.Refresh, "Restart") },
+                                isPrimary = true,
+                                size = 80.dp
+                            )
                         }
-                    }
-                    Phase.RUNNING -> {
-                        val isLastStep = next == null
-                        val label = if (isLastStep) "Stop" else "Next"
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
-                        }
-                        if (step?.durationSec == null) {
-                            OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Lap")
-                            }
-                        }
-                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Pause")
-                        }
-                    }
-                    Phase.PAUSED -> {
-                        val isLastStep = next == null
-                        val label = if (isLastStep) "Stop" else "Next"
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
-                        }
-                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.resume() }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Resume")
-                        }
-                    }
-                    Phase.COMPLETED -> Button(
-                        onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = accentButtonColors
-                    ) {
-                        Text("Restart")
-                    }
+                     }
+                     
+                     Spacer(Modifier.width(24.dp))
+                     
+                     // Right Slot (Reset)
+                     // Visible if Running? Usually not. Only Paused?
+                     // Request: "next for the timer we only need Start/Pause/Restart and Reset."
+                     // Usually Reset is available when Paused.
+                     if (state.phase == Phase.PAUSED || state.isStopwatchRunning) { // Allow reset if paused or stopwatch running
+                         ActionButton(
+                             onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.reset() },
+                             icon = { Icon(Icons.Default.Refresh, "Reset") },
+                             isPrimary = false,
+                             size = 64.dp
+                         )
+                     } else {
+                         Spacer(Modifier.size(64.dp))
+                     }
                 }
             }
         }

@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.unit.dp
-import ro.maris.tools.cooktimer.ui.run.diamondBorder
 import androidx.compose.runtime.DisposableEffect
 import kotlinx.coroutines.delay
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
@@ -33,6 +33,7 @@ import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 import ro.maris.tools.cooktimer.ui.run.StarterHelpOverlay
+import ro.maris.tools.cooktimer.ui.run.RetroSoundIndicator
 import ro.maris.tools.cooktimer.ui.run.SoundDetectionIndicator
 
 @Composable
@@ -219,7 +220,9 @@ fun StopwatchScreen(
                 }
             }
 
-            SoundDetectionIndicator(
+            // Retro sound indicator (new default)
+            // Use RetroSoundIndicator instead of SoundDetectionIndicator
+            RetroSoundIndicator(
                 state = detectorState, 
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
             )
@@ -270,6 +273,11 @@ fun StopwatchScreen(
             ) {
                  val isRunning = state.phase == Phase.RUNNING || (state.phase == Phase.READY && state.isStopwatchRunning)
                  
+                 // Colors for actions
+                 val mainActionColor = SoftRed
+                 val secondaryActionColor = MaterialTheme.colorScheme.primary
+                 val buttonBgColor = MaterialTheme.colorScheme.surface
+                 
                  Row(
                      modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                      horizontalArrangement = Arrangement.SpaceEvenly,
@@ -281,6 +289,11 @@ fun StopwatchScreen(
                              onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() },
                              modifier = Modifier.size(64.dp),
                              shape = CircleShape,
+                             border = BorderStroke(2.dp, secondaryActionColor),
+                             colors = ButtonDefaults.outlinedButtonColors(
+                                 containerColor = buttonBgColor,
+                                 contentColor = secondaryActionColor
+                             ),
                              contentPadding = PaddingValues(0.dp)
                          ) {
                             Text("Lap", style = MaterialTheme.typography.labelMedium)
@@ -297,11 +310,16 @@ fun StopwatchScreen(
                          else -> Icons.Filled.PlayArrow to { vm.start() }
                      }
 
-                     Button(
+                     OutlinedButton(
                          onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { centerAction() },
                          modifier = Modifier.size(80.dp), // 25% bigger than 64dp
                          shape = CircleShape,
-                         colors = accentButtonColors
+                         border = BorderStroke(3.dp, mainActionColor),
+                         colors = ButtonDefaults.outlinedButtonColors(
+                             containerColor = buttonBgColor,
+                             contentColor = mainActionColor
+                         ),
+                         contentPadding = PaddingValues(0.dp)
                      ) {
                          Icon(
                             imageVector = centerIcon, 
@@ -317,6 +335,11 @@ fun StopwatchScreen(
                              onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
                              modifier = Modifier.size(64.dp),
                              shape = CircleShape,
+                             border = BorderStroke(2.dp, secondaryActionColor),
+                             colors = ButtonDefaults.outlinedButtonColors(
+                                 containerColor = buttonBgColor,
+                                 contentColor = secondaryActionColor
+                             ),
                              contentPadding = PaddingValues(0.dp)
                          ) {
                             Icon(Icons.Filled.Refresh, contentDescription = "Reset")

@@ -10,7 +10,7 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Info
@@ -66,7 +66,7 @@ fun MainScreen() {
 }
 
 sealed class Screen(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    object Presets : Screen(Routes.PRESETS, "Presets", Icons.Filled.List)
+    object Presets : Screen(Routes.PRESETS, "Presets", Icons.Filled.Home)
     object Timer : Screen(Routes.TIMER, "Timer", Icons.Filled.PlayArrow)
     object Stopwatch : Screen(Routes.STOPWATCH, "Stopwatch", Icons.Filled.Info)
     object Settings : Screen(Routes.SETTINGS, "Settings", Icons.Filled.Settings)

@@ -49,6 +49,23 @@ The sound is scored against profiles.
 
 ---
 
+## 5. UI Implementation (The "Flux Bar")
+
+The UI separates "Listening" from "Triggering" to prevent user confusion.
+
+1.  **Microphone Circle (Volume)**:
+    *   Pulses with *Raw Input Volume*.
+    *   Always active when listening.
+    *   Shows the user that the microphone is working.
+
+2.  **Linear Hexagon Bar (Trigger Logic)**:
+    *   Displays *Percentage of Threshold* (0% to 100%).
+    *   **Physics**: Instant Attack (30ms), Fast Decay (150ms).
+    *   **Visuals**: 24 Vertical "Skinny Hexagons".
+    *   **Behavior**: Only rises when sound approaches the trigger threshold.
+
+---
+
 ## 2. Recognized Profiles
 
 ### 🫰 Snaps
