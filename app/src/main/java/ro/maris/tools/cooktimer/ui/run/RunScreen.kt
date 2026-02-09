@@ -111,41 +111,64 @@ fun RunScreen(
         Text(text = state.presetName, style = MaterialTheme.typography.titleMedium)
         Text(text = step?.title ?: "-", style = MaterialTheme.typography.headlineSmall)
 
-        val timerText = when {
-            state.phase == Phase.RUNNING -> "Remaining: ${formatTime(requireNotNull(state.remainingSec))}"
-            state.isStopwatchRunning -> "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
+        val (timerLabel, timerValue) = when {
+            state.phase == Phase.RUNNING -> "Remaining" to formatTime(requireNotNull(state.remainingSec))
+            state.isStopwatchRunning -> "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
             state.phase == Phase.PAUSED -> {
                 val label = if (step?.durationSec != null) "Remaining" else "Elapsed"
                 val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
-                "$label: ${formatTime(timeValue)}"
+                label to formatTime(timeValue)
             }
             state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
-                "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
-            state.phase == Phase.READY -> "Ready"
+                "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
+            state.phase == Phase.READY -> "" to "READY"
             else -> {
                 val label = when (state.phase) {
-                    Phase.READY -> "Ready"
-                    Phase.PAUSED -> "Paused"
-                    Phase.COMPLETED -> "Completed"
-                    Phase.RUNNING -> "Running"
+                    Phase.READY -> "READY"
+                    Phase.PAUSED -> "PAUSED"
+                    Phase.COMPLETED -> "DONE"
+                    Phase.RUNNING -> "RUN"
                 }
-                label
+                "" to label
             }
         }
-        Box(
+
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            val progress = if ((state.phase == Phase.RUNNING || state.phase == Phase.PAUSED) && step?.durationSec != null) {
+                val total = step.durationSec.toFloat()
+                val current = state.remainingSec?.toFloat() ?: state.pausedRemainingSec?.toFloat() ?: 0f
+                (current / total).coerceIn(0f, 1f)
+            } else if (state.isStopwatchRunning) {
+                 // For stopwatch, loop progress every 60s
+                 val sec = state.stopwatchElapsedSec ?: 0
+                 (sec % 60) / 60f
+            } else {
+                1f
+            }
+            
+            CircularSegmentedProgress(
+                progress = progress,
+                modifier = Modifier.size(240.dp),
+                activeColor = if (isDarkTheme) SoftRed else MaterialTheme.colorScheme.primary
+            ) {
+                 SixteenSegmentDisplay(
+                    text = timerValue,
+                    modifier = Modifier.width(180.dp),
+                    segmentColor = if (isDarkTheme) SoftRed else MaterialTheme.colorScheme.primary
+                )
+            }
+
             Text(
-                text = timerText,
-                style = timerTextStyle,
-                color = if (isDarkTheme && (state.phase == Phase.RUNNING || state.isStopwatchRunning)) {
-                    SoftRed
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                }
+                text = if (timerLabel.isNotEmpty()) "$timerLabel: $timerValue" else timerValue,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        
         Text(
             text = when (state.phase) {
                 Phase.READY -> "READY"
@@ -279,7 +302,13 @@ fun RunScreen(
 }
 
 private fun formatTime(sec: Int): String {
-    val m = sec / 60
+    val h = sec / 3600
+    val m = (sec % 3600) / 60
     val s = sec % 60
-    return "%d:%02d".format(m, s)
+    
+    return if (h > 0) {
+        "%d:%02d:%02d".format(h, m, s)
+    } else {
+        "%02d:%02d".format(m, s)
+    }
 }

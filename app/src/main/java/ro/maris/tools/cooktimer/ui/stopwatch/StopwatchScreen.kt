@@ -16,7 +16,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.unit.dp
+import ro.maris.tools.cooktimer.ui.run.diamondBorder
 import androidx.compose.runtime.DisposableEffect
 import kotlinx.coroutines.delay
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
@@ -108,40 +115,85 @@ fun StopwatchScreen(
         ) {
             Text(text = state.presetName, style = MaterialTheme.typography.titleMedium)
             
-            val timerText = when {
-                state.phase == Phase.RUNNING -> "Remaining: ${formatTime(requireNotNull(state.remainingSec))}"
-                state.isStopwatchRunning -> "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
+            val (timerLabel, timerValue) = when {
+                state.phase == Phase.RUNNING -> "Remaining" to formatTime(requireNotNull(state.remainingSec))
+                state.isStopwatchRunning -> "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
                 state.phase == Phase.PAUSED -> {
                     val label = if (step?.durationSec != null) "Remaining" else "Elapsed"
                     val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
-                    "$label: ${formatTime(timeValue)}"
+                    label to formatTime(timeValue)
                 }
                 state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
-                    "Elapsed: ${formatTime(requireNotNull(state.stopwatchElapsedSec))}"
-                state.phase == Phase.READY -> "Ready"
+                    "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
+                state.phase == Phase.READY -> "" to "READY"
                 else -> {
                     val label = when (state.phase) {
-                        Phase.READY -> "Ready"
-                        Phase.PAUSED -> "Paused"
-                        Phase.COMPLETED -> "Completed"
-                        Phase.RUNNING -> "Running"
+                        Phase.READY -> "READY"
+                        Phase.PAUSED -> "PAUSED"
+                        Phase.COMPLETED -> "DONE"
+                        Phase.RUNNING -> "RUN"
                     }
-                    label
+                    "" to label
                 }
             }
+
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = timerText,
-                    style = timerTextStyle,
-                    color = if (isDarkTheme && (state.phase == Phase.RUNNING || state.isStopwatchRunning)) {
-                        SoftRed
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val progress = if ((state.phase == Phase.RUNNING || state.phase == Phase.PAUSED) && step?.durationSec != null) {
+                         val total = step.durationSec.toFloat()
+                         val current = state.remainingSec?.toFloat() ?: state.pausedRemainingSec?.toFloat() ?: 0f
+                         (current / total).coerceIn(0f, 1f)
+                    } else if (state.isStopwatchRunning || state.stopwatchElapsedSec != null) {
+                         val sec = state.stopwatchElapsedSec ?: 0
+                         (sec % 60) / 60f
                     } else {
-                        MaterialTheme.colorScheme.onSurface
+                         1f
                     }
-                )
+
+                    ro.maris.tools.cooktimer.ui.run.CircularSegmentedProgress(
+                        progress = progress,
+                        modifier = Modifier.size(240.dp),
+                        activeColor = SoftRed
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                                text = timerValue,
+                                modifier = Modifier.width(180.dp),
+                                segmentColor = SoftRed
+                            )
+                            
+                            // Lap Counter if Stopwatch
+                            val laps = state.laps
+                            if (!laps.isNullOrEmpty()) {
+                                 Spacer(Modifier.height(8.dp))
+                                 ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                                    text = laps.size.toString().padStart(2, '0'),
+                                    modifier = Modifier
+                                         .height(30.dp)
+                                         .width(50.dp),
+                                    segmentColor = SoftRed
+                                )
+                                 Text(
+                                    text = "Laps",
+                                    style = MaterialTheme.typography.labelSmall,
+                                     color = SoftRed
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (timerLabel.isNotEmpty()) "$timerLabel: $timerValue" else timerValue,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Text(
                 text = when (state.phase) {
@@ -172,112 +224,11 @@ fun StopwatchScreen(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
             )
 
-            Spacer(Modifier.height(16.dp))
-
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                HorizontalDivider()
-
-                if (next != null) {
-                    Text(
-                        text = "Next: ${next.title}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (canGoBack) {
-                       OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.back() }) { Text("Back") }
-                    }
-                    val isLastStep = next == null
-                    val showRestart = isLastStep && (state.isReadyToAdvance || state.phase == Phase.COMPLETED)
-                    val nextLabel = if (showRestart) "Restart" else if (isLastStep) "Stop" else "Next"
-                    val nextAction = if (showRestart) vm::reset else vm::next
-                    OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { nextAction() }, modifier = Modifier.weight(1f)) { Text(nextLabel) }
-                }
-
-                when (state.phase) {
-                    Phase.READY -> {
-                        val isLastStep = next == null
-                        val action = when {
-                            state.isReadyToAdvance -> if (isLastStep) vm::reset else vm::next
-                            state.isStopwatchRunning -> vm::next
-                            step?.startMode == StartMode.MANUAL || step?.durationSec == null -> vm::start
-                            else -> vm::start
-                        }
-                        val label = when {
-                            state.isReadyToAdvance -> if (isLastStep) "Restart" else "Next"
-                            state.isStopwatchRunning -> if (isLastStep) "Stop" else "Next"
-                            step?.startMode == StartMode.MANUAL || step?.durationSec == null -> "Start"
-                            else -> "Start"
-                        }
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { action() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
-                        }
-                        if (state.isStopwatchRunning) {
-                            OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Lap")
-                            }
-                            OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Pause")
-                            }
-                        }
-                    }
-                    Phase.RUNNING -> {
-                        val isLastStep = next == null
-                        val label = if (isLastStep) "Stop" else "Next"
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
-                        }
-                        if (step?.durationSec == null) {
-                            OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Lap")
-                            }
-                        }
-                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.pause() }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Pause")
-                        }
-                    }
-                    Phase.PAUSED -> {
-                        val isLastStep = next == null
-                        val label = if (isLastStep) "Stop" else "Next"
-                        Button(
-                            onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.next() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentButtonColors
-                        ) {
-                            Text(label)
-                        }
-                        OutlinedButton(onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.resume() }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Resume")
-                        }
-                    }
-                    Phase.COMPLETED -> Button(
-                        onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = accentButtonColors
-                    ) {
-                        Text("Restart")
-                    }
-                }
-            }
-            
             // Laps List
             if (state.laps.isNotEmpty()) {
                 HorizontalDivider()
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth().weight(1f), // Take remaining space or at least some space
+                    modifier = Modifier.fillMaxWidth().weight(1f), 
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(state.laps.reversed()) { lap ->
@@ -308,8 +259,75 @@ fun StopwatchScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     }
                 }
+            } else {
+                 Spacer(Modifier.weight(1f))
+            }
+
+            HorizontalDivider()
+            
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                 val isRunning = state.phase == Phase.RUNNING || (state.phase == Phase.READY && state.isStopwatchRunning)
+                 
+                 Row(
+                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                     horizontalArrangement = Arrangement.SpaceEvenly,
+                     verticalAlignment = Alignment.Bottom
+                 ) {
+                     // Left Button (Lap) - visible if running
+                     if (isRunning) {
+                         OutlinedButton(
+                             onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.lap() },
+                             modifier = Modifier.size(64.dp),
+                             shape = CircleShape,
+                             contentPadding = PaddingValues(0.dp)
+                         ) {
+                            Text("Lap", style = MaterialTheme.typography.labelMedium)
+                        }
+                     } else {
+                         Spacer(Modifier.size(64.dp))
+                     }
+
+                     // Center Button (Start/Pause/Resume/Restart)
+                     val (centerIcon, centerAction) = when {
+                         isRunning -> Icons.Filled.Pause to { vm.pause() }
+                         state.phase == Phase.PAUSED -> Icons.Filled.PlayArrow to { vm.resume() }
+                         state.phase == Phase.COMPLETED -> Icons.Filled.Refresh to { vm.reset() }
+                         else -> Icons.Filled.PlayArrow to { vm.start() }
+                     }
+
+                     Button(
+                         onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { centerAction() },
+                         modifier = Modifier.size(80.dp), // 25% bigger than 64dp
+                         shape = CircleShape,
+                         colors = accentButtonColors
+                     ) {
+                         Icon(
+                            imageVector = centerIcon, 
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp)
+                         )
+                     }
+
+                     // Right Button (Reset) - visible if running or paused
+                     val showReset = isRunning || state.phase == Phase.PAUSED
+                     if (showReset) {
+                         OutlinedButton(
+                             onClick = sfxClick(sfx, SfxId.RunPrimaryNext) { vm.reset() },
+                             modifier = Modifier.size(64.dp),
+                             shape = CircleShape,
+                             contentPadding = PaddingValues(0.dp)
+                         ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Reset")
+                         }
+                     } else {
+                         Spacer(Modifier.size(64.dp))
+                     }
+                 }
             }
         }
+
         if (showHelp) {
             StarterHelpOverlay(onDismiss = { 
                 showHelp = false
@@ -320,7 +338,13 @@ fun StopwatchScreen(
 }
 
 private fun formatTime(sec: Int): String {
-    val m = sec / 60
+    val h = sec / 3600
+    val m = (sec % 3600) / 60
     val s = sec % 60
-    return "%d:%02d".format(m, s)
+    
+    return if (h > 0) {
+        "%d:%02d:%02d".format(h, m, s)
+    } else {
+        "%02d:%02d".format(m, s)
+    }
 }
