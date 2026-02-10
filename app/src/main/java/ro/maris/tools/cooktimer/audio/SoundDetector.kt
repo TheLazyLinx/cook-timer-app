@@ -43,6 +43,7 @@ data class SoundDetectorState(
     val count: Int = 0,
     val lastStrength: Float = 0f,
     val lastPeak: Float = 0f,
+    val lastConfidence: Float = 0f,
     val rms: Float = 0f,
     val noiseFloor: Float = 0f,
     val currentRms: Float = 0f,
@@ -219,7 +220,7 @@ class SoundDetector @Inject constructor(
     }
 
     fun clearHistory() {
-        _state.update { it.copy(events = emptyList(), count = 0, lastRejectionReason = null, debugInfo = "", logs = emptyList()) }
+        _state.update { it.copy(events = emptyList(), count = 0, lastConfidence = 0f, lastRejectionReason = null, debugInfo = "", logs = emptyList()) }
     }
 
     /**
@@ -690,6 +691,7 @@ class SoundDetector @Inject constructor(
                         _state.update { current ->
                             val updatedLogs = (current.logs + logEntry).takeLast(maxLogs)
                             current.copy(
+                                lastConfidence = bestConfidence,
                                 lastRejectionReason = rejectionReason,
                                 debugInfo = "Last Fail: $rejectionReason",
                                 logs = updatedLogs
@@ -727,6 +729,7 @@ class SoundDetector @Inject constructor(
                                         count = current.count + 1,
                                         lastStrength = pending.strength,
                                         lastPeak = pending.peak,
+                                        lastConfidence = pending.confidence,
                                         rms = rmsF,
                                         noiseFloor = noiseFloor,
                                         currentRms = rmsF,
@@ -750,6 +753,7 @@ class SoundDetector @Inject constructor(
                                 _state.update { current ->
                                     val updatedLogs = (current.logs + rejectedLog).takeLast(maxLogs)
                                     current.copy(
+                                        lastConfidence = pending.confidence,
                                         lastRejectionReason = postRejectReason,
                                         debugInfo = "Last Fail: $postRejectReason",
                                         logs = updatedLogs

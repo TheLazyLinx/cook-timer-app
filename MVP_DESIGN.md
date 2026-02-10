@@ -150,7 +150,7 @@ RunState {
     -   Pause / Resume
     -   Next step
     -   Previous step
--   Microphone listening indicator (if enabled)
+-   Microphone listening indicator (if enabled): dual-arc retro indicator with volume arc, detection arc, and center status text.
 
 ------------------------------------------------------------------------
 
@@ -168,6 +168,7 @@ RunState {
 -   Enable / disable slap or knock gesture
 -   Gesture test
 -   Sound & vibration toggles
+-   Display style: "Disable Segmented Display" (standard numbers vs segmented digits)
 
 ------------------------------------------------------------------------
 

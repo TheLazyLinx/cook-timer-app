@@ -97,6 +97,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setSegmentedDisplayEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setSegmentedDisplayEnabled(enabled)
+        }
+    }
+
     fun startDetection(): Boolean {
         soundDetector.debugContext = "SETTINGS"
         return soundDetector.start()

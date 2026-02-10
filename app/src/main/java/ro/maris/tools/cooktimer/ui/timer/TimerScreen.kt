@@ -1,6 +1,5 @@
 package ro.maris.tools.cooktimer.ui.timer
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
@@ -14,19 +13,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import kotlinx.coroutines.delay
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.model.Phase
-import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 import ro.maris.tools.cooktimer.ui.run.StarterHelpOverlay
-import ro.maris.tools.cooktimer.ui.run.RetroSoundIndicator
+import ro.maris.tools.cooktimer.ui.run.RetroArcSoundIndicator
+import ro.maris.tools.cooktimer.ui.run.NumberDisplay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -51,6 +49,7 @@ fun TimerScreen(
     val detectorState by vm.detectorState.collectAsState()
     val settings by vm.settings.collectAsState(initial = null)
     var showHelp by remember { mutableStateOf(false) }
+    val useSegmentedDisplay = settings?.segmentedDisplayEnabled ?: true
     
     // Show help if not shown before
     LaunchedEffect(settings) {
@@ -59,7 +58,7 @@ fun TimerScreen(
         }
     }
     
-    var lastState by remember { mutableStateOf(state) }
+    val lastState = remember { mutableStateOf(state) }
 
     DisposableEffect(Unit) {
         vm.onVisibilityChange(true)
@@ -69,7 +68,7 @@ fun TimerScreen(
     }
 
     LaunchedEffect(state) {
-        val prev = lastState
+        val prev = lastState.value
         val autoAdvanced = state.activeStepIndex > prev.activeStepIndex && !prev.stepCompleted
         if (prev.phase != Phase.COMPLETED && state.phase == Phase.COMPLETED) {
             sfx.play(SfxId.PresetFinished)
@@ -87,16 +86,14 @@ fun TimerScreen(
                 sfx.play(SfxId.StepStart)
             }
         }
-        lastState = state
+    }
+    SideEffect {
+        lastState.value = state
     }
 
     val step = state.activeStep
     val next = state.nextStep
 
-    val isDarkTheme = isSystemInDarkTheme()
-    val timerTextStyle = MaterialTheme.typography.displayLarge.copy(
-        fontFamily = FontFamily.Monospace
-    )
     val mainActionColor = SoftRed
     val secondaryActionColor = MaterialTheme.colorScheme.primary
     val buttonBgColor = MaterialTheme.colorScheme.surface
@@ -153,22 +150,22 @@ fun TimerScreen(
                         durationSec = currentDuration,
                         onDurationChange = { newDuration ->
                             vm.setDuration(newDuration)
-                        }
+                        },
+                        useSegmentedDisplay = useSegmentedDisplay
                     )
                 }
             } else {
-                val (timerLabel, timerValue) = when {
-                    state.phase == Phase.RUNNING -> "Remaining" to formatTime(requireNotNull(state.remainingSec))
-                    state.isStopwatchRunning -> "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
+                val timerValue = when {
+                    state.phase == Phase.RUNNING -> formatTime(requireNotNull(state.remainingSec))
+                    state.isStopwatchRunning -> formatTime(requireNotNull(state.stopwatchElapsedSec))
                     state.phase == Phase.PAUSED -> {
-                        val label = if (step?.durationSec != null) "Remaining" else "Elapsed"
                         val timeValue = state.pausedRemainingSec ?: state.stopwatchElapsedSec ?: 0
-                         label to formatTime(timeValue)
+                        formatTime(timeValue)
                     }
                     state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
-                        "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
-                    state.phase == Phase.READY -> "" to "READY"
-                    else -> "" to ""
+                        formatTime(requireNotNull(state.stopwatchElapsedSec))
+                    state.phase == Phase.READY -> "READY"
+                    else -> ""
                 }
                 
                 val progress = if ((state.phase == Phase.RUNNING || state.phase == Phase.PAUSED) && step?.durationSec != null) {
@@ -192,51 +189,37 @@ fun TimerScreen(
                         activeColor = SoftRed
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                             ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                             NumberDisplay(
                                 text = timerValue,
+                                useSegmentedDisplay = useSegmentedDisplay,
                                 modifier = Modifier.width(180.dp),
-                                segmentColor = SoftRed
-                            )
-                            if (timerLabel.isNotEmpty()) {
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = timerLabel,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                             Spacer(Modifier.height(4.dp))
-                             Text(
-                                text = when (state.phase) {
-                                    Phase.READY -> "READY"
-                                    Phase.RUNNING -> "RUNNING"
-                                    Phase.PAUSED -> "PAUSED"
-                                    Phase.COMPLETED -> "COMPLETED"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                segmentColor = SoftRed,
+                                textStyle = MaterialTheme.typography.displayLarge,
+                                textColor = SoftRed
                             )
                         }
                     }
                 }
             }
 
-            if (!step?.notes.isNullOrBlank()) {
+            val notesText = step?.notes
+            if (!notesText.isNullOrBlank()) {
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = step!!.notes!!,
+                        text = notesText,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.widthIn(max = 360.dp)
                     )
                 }
             }
 
-            RetroSoundIndicator(
+            RetroArcSoundIndicator(
                 state = detectorState, 
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                isPaused = state.phase == Phase.PAUSED
             )
 
             // Removed heavy Spacer(weight) since I used weight in the Box above.
@@ -305,7 +288,6 @@ fun TimerScreen(
                      when (state.phase) {
                         Phase.READY -> {
                              // Start or Restart
-                             val isLastStep = next == null
                              // If isReadyToAdvance, it means we ran and finished?
                              // But for Single Step Timer, phase goes to COMPLETED usually?
                              // vm.start()
@@ -375,7 +357,7 @@ fun TimerScreen(
                      // Visible if Running? Usually not. Only Paused?
                      // Request: "next for the timer we only need Start/Pause/Restart and Reset."
                      // Usually Reset is available when Paused.
-                     if (state.phase == Phase.PAUSED || state.isStopwatchRunning) { // Allow reset if paused or stopwatch running
+                     if (state.phase == Phase.RUNNING || state.phase == Phase.PAUSED || state.phase == Phase.COMPLETED || state.isStopwatchRunning) {
                          ActionButton(
                              onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.reset() },
                              icon = { Icon(Icons.Default.Refresh, "Reset") },

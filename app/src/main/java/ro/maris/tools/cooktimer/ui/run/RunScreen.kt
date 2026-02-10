@@ -1,6 +1,5 @@
 package ro.maris.tools.cooktimer.ui.run
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
@@ -8,16 +7,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import ro.maris.tools.cooktimer.domain.model.Phase
-import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -51,6 +48,7 @@ fun RunScreen(
     val detectorState by vm.detectorState.collectAsState()
     val settings by vm.settings.collectAsState(initial = null)
     var showHelp by remember { mutableStateOf(false) }
+    val useSegmentedDisplay = settings?.segmentedDisplayEnabled ?: true
     
     // Show help if not shown before
     LaunchedEffect(settings) {
@@ -59,7 +57,7 @@ fun RunScreen(
         }
     }
     
-    var lastState by remember { mutableStateOf(state) }
+    val lastState = remember { mutableStateOf(state) }
 
     DisposableEffect(Unit) {
         vm.onVisibilityChange(true)
@@ -69,7 +67,7 @@ fun RunScreen(
     }
 
     LaunchedEffect(state) {
-        val prev = lastState
+        val prev = lastState.value
         val autoAdvanced = state.activeStepIndex > prev.activeStepIndex && !prev.stepCompleted
         if (prev.phase != Phase.COMPLETED && state.phase == Phase.COMPLETED) {
             sfx.play(SfxId.PresetFinished)
@@ -87,22 +85,16 @@ fun RunScreen(
                 sfx.play(SfxId.StepStart)
             }
         }
-        lastState = state
+    }
+    SideEffect {
+        lastState.value = state
     }
 
     val step = state.activeStep
     val next = state.nextStep
 
-    val isDarkTheme = isSystemInDarkTheme()
-    val accentButtonColors = ButtonDefaults.buttonColors(
-        containerColor = SoftRed,
-        contentColor = Color.White
-    )
     val accentTextButtonColors = ButtonDefaults.textButtonColors(
         contentColor = SoftRed
-    )
-    val timerTextStyle = MaterialTheme.typography.displayLarge.copy(
-        fontFamily = FontFamily.Monospace
     )
     val canGoBack = state.activeStepIndex > 0
     val mainActionColor = SoftRed
@@ -157,15 +149,7 @@ fun RunScreen(
             state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
                 "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
             state.phase == Phase.READY -> "" to "READY"
-            else -> {
-                val label = when (state.phase) {
-                    Phase.READY -> "READY"
-                    Phase.PAUSED -> "PAUSED"
-                    Phase.COMPLETED -> "DONE"
-                    Phase.RUNNING -> "RUN"
-                }
-                "" to label
-            }
+            else -> "" to "DONE"
         }
 
         Column(
@@ -190,10 +174,13 @@ fun RunScreen(
                 modifier = Modifier.size(240.dp),
                 activeColor = SoftRed
             ) {
-                 SixteenSegmentDisplay(
+                 NumberDisplay(
                     text = timerValue,
+                    useSegmentedDisplay = useSegmentedDisplay,
                     modifier = Modifier.width(180.dp),
-                    segmentColor = SoftRed
+                    segmentColor = SoftRed,
+                    textStyle = MaterialTheme.typography.displayLarge,
+                    textColor = SoftRed
                 )
             }
 
@@ -215,22 +202,24 @@ fun RunScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
         )
 
-        if (!step?.notes.isNullOrBlank()) {
+        val notesText = step?.notes
+        if (!notesText.isNullOrBlank()) {
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = step!!.notes!!,
+                    text = notesText,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.widthIn(max = 360.dp)
                 )
             }
         }
 
-        RetroSoundIndicator(
+        RetroArcSoundIndicator(
             state = detectorState, 
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            isPaused = state.phase == Phase.PAUSED
         )
 
         Spacer(Modifier.weight(1f))
@@ -320,7 +309,6 @@ fun RunScreen(
                          }
                     }
                     Phase.RUNNING -> {
-                        val isLastStep = next == null
                         // If timed step running -> Pause is main action? Or Next (Skip)?
                         // Usually Pause is center in Timer apps. Next/Skip is side.
                         // But original code had "Next" as Primary Button and "Pause" as secondary.
