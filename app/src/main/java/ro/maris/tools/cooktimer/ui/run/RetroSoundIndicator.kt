@@ -1,14 +1,16 @@
 package ro.maris.tools.cooktimer.ui.run
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -21,153 +23,466 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import ro.maris.tools.cooktimer.audio.SoundDetectorState
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
-import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 
-// ...existing code...
+private const val RetroSegmentCount = 18
+private const val RetroFlashDurationMs = 150L
+private const val RetroRejectionMessageMs = 2000L
+private const val RetroDetectionHoldShortMs = 350L
+private const val RetroDetectionHoldLongMs = 900L
+private const val RetroDetectionAttackMs = 80
+private const val RetroDetectionDecayMs = 220
+private const val RetroVuDecayMs = 70
+private const val RetroGapScale = 0.65f
+private val RetroCenterTextWidth = 180.dp
+private val RetroGreen = Color(0xFF29C16F)
+private val RetroBlue = Color(0xFF374CFF)
+private val RetroBlueFlash = Color(0xFF6B7BFF)
+
 @Composable
-fun RetroSoundIndicator(
+fun RetroArcSoundIndicator(
     state: SoundDetectorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    indicatorSize: Dp = 80.dp,
+    isPaused: Boolean = false
 ) {
-    // Threshold calculation logic
     val baseThreshold = 0.035f
     val multiplier = 4.0f
     val computedThreshold = (state.noiseFloor * multiplier).coerceAtLeast(baseThreshold)
-    
-    // Normalize RMS
-    val relativeRms = (state.currentRms / computedThreshold).coerceIn(0f, 1.2f)
-
-    // Visual Logic
-    // Responsive Indication mapped to Threshold (Percentage System)
-    // 0% -> Silence, 100% -> Threshold Met
-    // Using simple ratio as requested: 50% sound (relative to limit) = 50% bar
-    val rawRatio = (state.currentRms / computedThreshold).coerceIn(0f, 1f)
-    val targetProgress = if (state.isLit) 1.0f else rawRatio
-
-    // Asymmetric Animation: Fast Attack, Slow Decay
-    // Ensures brief peaks are visible to the user ("Pulse Extender" effect via physics)
-    val progressAnimatable = remember { Animatable(0f) }
-    
-    LaunchedEffect(targetProgress) {
-        if (targetProgress > progressAnimatable.value) {
-            // Attack: Instant (30ms) to catch the peak
-            progressAnimatable.animateTo(targetProgress, tween(30, easing = LinearEasing))
-        } else {
-            // Decay: Faster release (150ms) to feel responsive but perceptible
-            progressAnimatable.animateTo(targetProgress, tween(150, easing = LinearOutSlowInEasing))
-        }
-    }
-    
-    val animatedProgress = progressAnimatable.value
-    
-    val micAlpha by animateFloatAsState(
-        targetValue = if (state.isLit) 1f else (0.3f + (relativeRms * 0.7f)).coerceIn(0.3f, 1f),
-        label = "micAlpha"
+    val vuTarget = (state.currentRms / computedThreshold).coerceIn(0f, 1f)
+    val vuProgress = rememberAttackDecayProgress(
+        target = if (state.isLit) 1f else vuTarget
     )
 
-    // Error message 
-    val errorMessage = remember(state.lastRejectionReason) {
-         if (state.lastRejectionReason != null) {
-              getFriendlyRejectionMessage(state.lastRejectionReason!!)
-         } else null
-    }
-    
-    var visibleError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(errorMessage) {
-        if (errorMessage != null) {
-            visibleError = errorMessage
-            delay(5000)
-            visibleError = null
+    val detectionAnim = remember { Animatable(0f) }
+    var detectionActive by remember { mutableStateOf(false) }
+    var pulseToken by remember { mutableStateOf(0) }
+
+    var flashOn by remember { mutableStateOf(false) }
+    var flashToken by remember { mutableStateOf(0) }
+
+    suspend fun triggerDetectionPulse(holdMs: Long) {
+        pulseToken += 1
+        val myToken = pulseToken
+        detectionActive = true
+        try {
+            detectionAnim.stop()
+            detectionAnim.snapTo(0f)
+            val target = 1f
+            detectionAnim.animateTo(
+                targetValue = target,
+                animationSpec = tween(durationMillis = RetroDetectionAttackMs, easing = LinearEasing)
+            )
+            delay(holdMs)
+            detectionAnim.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = RetroDetectionDecayMs, easing = LinearOutSlowInEasing)
+            )
+        } finally {
+            withContext(NonCancellable) {
+                if (pulseToken == myToken) {
+                    detectionAnim.snapTo(0f)
+                    detectionActive = false
+                }
+            }
         }
     }
 
-    Row(
-        modifier = modifier.height(64.dp), 
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // 1. Microphone Icon in Circle
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .border(2.dp, SoftRed.copy(alpha = 0.5f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-             Icon(
-                 imageVector = if (visibleError != null) Icons.Default.Warning else Icons.Default.Mic,
-                 contentDescription = "Microphone Level",
-                 tint = if (visibleError != null) MaterialTheme.colorScheme.error else SoftRed.copy(alpha = micAlpha),
-                 modifier = Modifier.size(28.dp)
-             )
+    LaunchedEffect(state.count) {
+        if (state.count > 0) {
+            triggerDetectionPulse(RetroDetectionHoldLongMs)
         }
-        
-        // 2. Bar Precision Detector
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(48.dp)
-                .border(2.dp, SoftRed.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val segmentCount = 24
-                val w = size.width
-                val h = size.height
-                val gap = 2.dp.toPx()
-                val totalGap = gap * (segmentCount - 1)
-                val segmentWidth = (w - totalGap) / segmentCount
-                
-                // Map progress to segments
-                val activeCount = (animatedProgress * segmentCount).toInt().coerceIn(0, segmentCount)
-                
-                for (i in 0 until segmentCount) {
-                    val x = i * (segmentWidth + gap)
-                    val centerX = x + segmentWidth / 2
-                    val centerY = h / 2
-                    
-                    // Draw skinny Hexagon (Vertical segment style)
-                    val tipH = segmentWidth / 2 // 45 degree points
-                    val safeTipH = tipH.coerceAtMost(h / 2)
-                    
-                    val path = Path().apply {
-                        moveTo(centerX, 0f) // Top Tip
-                        lineTo(x + segmentWidth, safeTipH) // Top Right Shoulder
-                        lineTo(x + segmentWidth, h - safeTipH) // Bot Right Shoulder
-                        lineTo(centerX, h) // Bot Tip
-                        lineTo(x, h - safeTipH) // Bot Left Shoulder
-                        lineTo(x, safeTipH) // Top Left Shoulder
-                        close()
-                    }
-                    
-                    val isActive = i < activeCount
-                    val alpha = if (isActive) 1.0f else 0.1f
-                    
-                    drawPath(path, SoftRed.copy(alpha = alpha))
+    }
+
+    LaunchedEffect(state.lastRejectionReason) {
+        if (state.lastRejectionReason != null) {
+            triggerDetectionPulse(RetroDetectionHoldShortMs)
+        }
+    }
+
+    LaunchedEffect(isPaused) {
+        if (isPaused) {
+            flashOn = false
+            detectionAnim.stop()
+            detectionAnim.snapTo(0f)
+            detectionActive = false
+        }
+    }
+    LaunchedEffect(state.count) {
+        if (state.count > 0) {
+            flashToken += 1
+            val myToken = flashToken
+            flashOn = true
+            try {
+                delay(RetroFlashDurationMs)
+            } finally {
+                if (flashToken == myToken) {
+                    flashOn = false
                 }
             }
-            
-            // Overlay Text for Status
-            if (visibleError != null) {
-                Text(
-                    text = visibleError!!,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.align(Alignment.Center)
+        }
+    }
+
+    val detectionProgress = if (flashOn) {
+        1f
+    } else if (detectionActive) {
+        detectionAnim.value.coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val micAlpha = (0.35f + (vuProgress * 0.65f)).coerceIn(0.35f, 1f)
+
+    val errorMessage = remember(state.lastRejectionReason) {
+        state.lastRejectionReason?.let { getFriendlyRejectionMessage(it) }
+    }
+    var showError by remember { mutableStateOf(false) }
+    LaunchedEffect(errorMessage) {
+        if (errorMessage != null) {
+            showError = true
+            delay(RetroRejectionMessageMs)
+            showError = false
+        }
+    }
+    val showWarning = showError
+
+    Row(
+        modifier = modifier.height(indicatorSize),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        HexArcIndicator(
+            size = indicatorSize,
+            segmentCount = RetroSegmentCount,
+            progress = vuProgress,
+            activeColor = RetroGreen,
+            inactiveAlpha = 0.12f,
+            startAngleDeg = 90f,
+            sweepAngleDeg = 180f,
+            coreScale = 0.58f
+        ) { coreSize ->
+            val iconSize = coreSize * 0.45f
+            Box(
+                modifier = Modifier
+                    .size(coreSize)
+                    .border(2.dp, RetroGreen.copy(alpha = 0.7f), CircleShape)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (showWarning) Icons.Default.Warning else Icons.Default.Mic,
+                    contentDescription = null,
+                    tint = if (showWarning) MaterialTheme.colorScheme.error else RetroGreen.copy(alpha = micAlpha),
+                    modifier = Modifier.size(iconSize)
                 )
             }
         }
+
+        Spacer(modifier = Modifier.width(24.dp))
+        Box(
+            modifier = Modifier
+                .width(RetroCenterTextWidth)
+                .height(indicatorSize),
+            contentAlignment = Alignment.Center
+        ) {
+            if (showError && errorMessage != null) {
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(24.dp))
+
+        HexArcIndicator(
+            size = indicatorSize,
+            segmentCount = RetroSegmentCount,
+            progress = detectionProgress,
+            activeColor = RetroBlue,
+            inactiveAlpha = 0.12f,
+            startAngleDeg = -90f,
+            sweepAngleDeg = 180f,
+            coreScale = 0.58f
+        ) { coreSize ->
+            DetectionCore(
+                size = coreSize,
+                progress = detectionProgress,
+                flashOn = flashOn,
+                borderColor = RetroBlue,
+                fillColor = RetroBlueFlash,
+                backgroundColor = MaterialTheme.colorScheme.surface
+            )
+        }
     }
+}
+
+@Composable
+private fun HexArcIndicator(
+    size: Dp,
+    segmentCount: Int,
+    progress: Float,
+    activeColor: Color,
+    inactiveAlpha: Float,
+    startAngleDeg: Float,
+    sweepAngleDeg: Float,
+    coreScale: Float,
+    centerContent: @Composable BoxScope.(Dp) -> Unit
+) {
+    val coreSize = size * coreScale
+    Box(modifier = Modifier.size(size)) {
+        HexArcSegments(
+            segmentCount = segmentCount,
+            progress = progress,
+            activeColor = activeColor,
+            inactiveAlpha = inactiveAlpha,
+            startAngleDeg = startAngleDeg,
+            sweepAngleDeg = sweepAngleDeg,
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            centerContent(coreSize)
+        }
+    }
+}
+
+@Composable
+private fun HexArcSegments(
+    segmentCount: Int,
+    progress: Float,
+    activeColor: Color,
+    inactiveAlpha: Float,
+    startAngleDeg: Float,
+    sweepAngleDeg: Float,
+    modifier: Modifier = Modifier
+) {
+    var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    val safeProgress = progress.coerceIn(0f, 1f)
+    val segmentPaths = remember(sizePx, segmentCount, startAngleDeg, sweepAngleDeg) {
+        buildHexArcPaths(sizePx, segmentCount, startAngleDeg, sweepAngleDeg)
+    }
+    val activeCount = remember(safeProgress, segmentCount) {
+        (safeProgress * segmentCount).roundToInt().coerceIn(0, segmentCount)
+    }
+
+    Canvas(
+        modifier = modifier.onSizeChanged { sizePx = it }
+    ) {
+        if (segmentPaths.isEmpty()) return@Canvas
+        segmentPaths.forEachIndexed { index, path ->
+            val alpha = if (index < activeCount) 1f else inactiveAlpha
+            drawPath(path, activeColor.copy(alpha = alpha))
+        }
+    }
+}
+
+@Composable
+private fun DetectionCore(
+    size: Dp,
+    progress: Float,
+    flashOn: Boolean,
+    borderColor: Color,
+    fillColor: Color,
+    backgroundColor: Color
+) {
+    var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    val safeProgress = progress.coerceIn(0f, 1f)
+    val dotColor = if (flashOn) fillColor else borderColor
+    val strokePx = with(LocalDensity.current) { 2.dp.toPx() }
+    val layout = remember(sizePx, safeProgress, strokePx) {
+        computeDetectionCoreLayout(sizePx, safeProgress, strokePx)
+    }
+
+    Canvas(
+        modifier = Modifier
+            .size(size)
+            .onSizeChanged { sizePx = it }
+    ) {
+        val shape = layout ?: return@Canvas
+        drawCircle(
+            color = backgroundColor,
+            radius = shape.outerRadius,
+            center = shape.center
+        )
+        drawCircle(
+            color = borderColor,
+            radius = shape.outerRadius,
+            center = shape.center,
+            style = Stroke(width = strokePx)
+        )
+        val startTop = shape.topCenter
+        val startBottom = shape.bottomCenter
+        val endTop = shape.topTouch
+        val endBottom = shape.bottomTouch
+        val t = safeProgress
+        val topCenter = Offset(
+            x = startTop.x + (endTop.x - startTop.x) * t,
+            y = startTop.y + (endTop.y - startTop.y) * t
+        )
+        val bottomCenter = Offset(
+            x = startBottom.x + (endBottom.x - startBottom.x) * t,
+            y = startBottom.y + (endBottom.y - startBottom.y) * t
+        )
+
+        drawArc(
+            color = dotColor,
+            startAngle = 0f,
+            sweepAngle = 180f,
+            useCenter = true,
+            topLeft = Offset(topCenter.x - shape.dotRadius, topCenter.y - shape.dotRadius),
+            size = Size(shape.dotRadius * 2f, shape.dotRadius * 2f)
+        )
+        drawArc(
+            color = dotColor,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = true,
+            topLeft = Offset(bottomCenter.x - shape.dotRadius, bottomCenter.y - shape.dotRadius),
+            size = Size(shape.dotRadius * 2f, shape.dotRadius * 2f)
+        )
+    }
+}
+
+private data class DetectionCoreLayout(
+    val center: Offset,
+    val outerRadius: Float,
+    val dotRadius: Float,
+    val topCenter: Offset,
+    val bottomCenter: Offset,
+    val topTouch: Offset,
+    val bottomTouch: Offset
+)
+
+private fun computeDetectionCoreLayout(
+    sizePx: IntSize,
+    progress: Float,
+    strokePx: Float
+): DetectionCoreLayout? {
+    if (sizePx.width == 0 || sizePx.height == 0) return null
+    val diameter = min(sizePx.width, sizePx.height).toFloat()
+    val center = Offset(sizePx.width / 2f, sizePx.height / 2f)
+    val outerRadius = (diameter - strokePx) / 2f
+
+    val innerDiameter = diameter - (strokePx * 2f)
+    val dotRadius = innerDiameter * 0.165f
+    val maxGap = (innerDiameter - (dotRadius * 4f)).coerceAtLeast(0f) * RetroGapScale
+    val baseGap = maxGap * (1f - progress)
+    val centerOffset = dotRadius + (baseGap / 2f)
+
+    val topCenter = Offset(center.x, center.y - centerOffset)
+    val bottomCenter = Offset(center.x, center.y + centerOffset)
+    val topTouch = Offset(center.x, center.y - dotRadius)
+    val bottomTouch = Offset(center.x, center.y + dotRadius)
+
+    return DetectionCoreLayout(
+        center = center,
+        outerRadius = outerRadius,
+        dotRadius = dotRadius,
+        topCenter = topCenter,
+        bottomCenter = bottomCenter,
+        topTouch = topTouch,
+        bottomTouch = bottomTouch
+    )
+}
+
+private fun buildHexArcPaths(
+    sizePx: IntSize,
+    segmentCount: Int,
+    startAngleDeg: Float,
+    sweepAngleDeg: Float
+): List<Path> {
+    if (sizePx.width == 0 || sizePx.height == 0 || segmentCount <= 0) return emptyList()
+
+    val minSize = min(sizePx.width, sizePx.height).toFloat()
+    val center = Offset(sizePx.width / 2f, sizePx.height / 2f)
+    val outerRadius = minSize / 2f
+    val innerRadius = outerRadius * 0.52f
+    val ringThickness = outerRadius - innerRadius
+    val segmentLength = ringThickness * 0.9f
+    val segmentWidth = segmentLength * 0.28f
+    val ringRadius = innerRadius + ringThickness / 2f
+
+    val startRad = Math.toRadians(startAngleDeg.toDouble()).toFloat()
+    val sweepRad = Math.toRadians(sweepAngleDeg.toDouble()).toFloat()
+    val step = if (segmentCount > 1) sweepRad / (segmentCount - 1) else 0f
+
+    return List(segmentCount) { index ->
+        val angle = startRad + (step * index)
+        val segmentCenter = Offset(
+            center.x + cos(angle) * ringRadius,
+            center.y + sin(angle) * ringRadius
+        )
+        buildHexPath(segmentCenter, angle, segmentLength, segmentWidth)
+    }
+}
+
+private fun buildHexPath(center: Offset, angleRad: Float, length: Float, width: Float): Path {
+    val halfLength = length / 2f
+    val halfWidth = width / 2f
+    val tip = halfWidth
+    val cosA = cos(angleRad)
+    val sinA = sin(angleRad)
+
+    val points = listOf(
+        Offset(-halfLength, 0f),
+        Offset(-halfLength + tip, -halfWidth),
+        Offset(halfLength - tip, -halfWidth),
+        Offset(halfLength, 0f),
+        Offset(halfLength - tip, halfWidth),
+        Offset(-halfLength + tip, halfWidth)
+    )
+
+    return Path().apply {
+        points.forEachIndexed { index, p ->
+            val rotated = Offset(
+                center.x + (p.x * cosA - p.y * sinA),
+                center.y + (p.x * sinA + p.y * cosA)
+            )
+            if (index == 0) {
+                moveTo(rotated.x, rotated.y)
+            } else {
+                lineTo(rotated.x, rotated.y)
+            }
+        }
+        close()
+    }
+}
+
+@Composable
+private fun rememberAttackDecayProgress(
+    target: Float,
+    attackMs: Int = 30,
+    decayMs: Int = RetroVuDecayMs
+): Float {
+    val animatable = remember { Animatable(0f) }
+    LaunchedEffect(target) {
+        val isAttack = target > animatable.value
+        animatable.animateTo(
+            targetValue = target,
+            animationSpec = tween(
+                durationMillis = if (isAttack) attackMs else decayMs,
+                easing = if (isAttack) LinearEasing else LinearOutSlowInEasing
+            )
+        )
+    }
+    return animatable.value
 }

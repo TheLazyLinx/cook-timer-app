@@ -14,5 +14,6 @@ interface SettingsRepository {
     suspend fun setSoundTriggerAction(action: SoundTriggerAction)
     suspend fun setAllowedSoundProfiles(profiles: Set<String>)
     suspend fun setThemeMode(mode: ThemeMode)
+    suspend fun setSegmentedDisplayEnabled(enabled: Boolean)
     suspend fun setHasShownSoundHelpOverlay(hasShown: Boolean)
 }

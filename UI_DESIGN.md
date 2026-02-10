@@ -22,30 +22,33 @@ The core graphic primitive is a pointed, elongated hexagon used for all digital 
 
 ---
 
-## 2. Sound Detection Indicator ("The Flux Bar")
+## 2. Sound Detection Indicator (Retro Arc)
 
-A specialized UI component that visually separates "Hearing" from "Detecting".
+A compact dual-arc indicator that separates live volume from confirmed detection.
 
 ### 2.1 The Two-Part System
 
-#### A. The Microphone Circle (The Ear)
+#### A. The Microphone Arc (The Ear)
 *   **Role**: Displays raw input volume (RMS).
-*   **Behavior**: Pulses transparency based on ambient noise levels.
-*   **Purpose**: Tells the user "I am listening."
+*   **Shape**: 18 narrow "Skinny Hexagon" segments arranged in a 180-degree arc.
+*   **Behavior**: VU-style progression with fast attack and quick decay.
+*   **Core**: Green mic icon inside a thin-ring circle.
 
-#### B. The Linear Bar (The Brain)
-*   **Role**: Displays detection confidence relative to the trigger threshold.
-*   **Percentage Logic**:
-    *   **0%**: Silence.
-    *   **50%**: Input volume is half of the trigger threshold.
-    *   **100%**: Threshold met (Trigger Event).
-*   **Shape**: Row of 24 vertical "Skinny Hexagon" crystals.
-*   **Animation Physics**:
-    *   **Attack (Rise)**: Instant (30ms). Catches even the fastest transient snaps.
-    *   **Decay (Fall)**: Fast-but-perceptible (150ms). Holds the peak just long enough for the human eye to register it before resetting.
+#### B. The Detection Arc (The Brain)
+*   **Role**: Displays confirmed detection pulses, not raw loudness.
+*   **Shape**: 18 narrow "Skinny Hexagon" segments in a mirrored 180-degree arc.
+*   **Core**: Blue ring with two semicircle dots that move toward each other during a detection pulse.
+*   **Flash**: A short blue flash on detection (150ms) that always resets.
 
-### 2.2 Rejection Feedback
-If a sound is loud enough but fails strict physics checks (e.g., speech), the bar remains at 0% or low levels, while the Text Overlay displays the specific failure reason (e.g., "Voice Ignored", "Too Long").
+#### C. Center Error Message
+*   **Role**: Shows friendly rejection text between the two arcs.
+*   **Behavior**: Short-lived and only visible after a failed detection.
+
+### 2.2 Layout & Scale
+*   **Indicator Height**: 80dp (scaled up for clarity).
+*   **Core Scale**: 0.58 of the arc diameter.
+*   **Center Text Width**: 180dp, fixed to avoid layout jitter.
+*   **Spacing**: 24dp between arc and text blocks.
 
 ---
 
@@ -54,3 +57,9 @@ If a sound is loud enough but fails strict physics checks (e.g., speech), the ba
 *   **SoftRed**: Used for Active State, Recording, and "Hot" UI elements.
 *   **Primary**: Used for Navigation and Secondary Actions.
 *   **Surface/Background**: Deep industrial dark mode by default.
+
+---
+
+## 4. Display Style Toggle
+
+Segmented digits are the default visual language. A General settings toggle can disable segmented digits and show standard monospace text for all numeric displays.

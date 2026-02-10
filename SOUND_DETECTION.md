@@ -1,4 +1,4 @@
-# Sound Detection System (Architecture 3.2)
+# Sound Detection System (Architecture 3.3)
 
 ## Overview
 
@@ -26,13 +26,13 @@ A sound only triggers the system if:
 
 ### Step C: Temporal Shape Checks (The Physics Check)
 Once triggered, the system monitors the sound's evolution over time to ensure it behaves like an Impact.
-*   **Sustain Check**: At 60ms, the sound must have decayed by >50%. (Rejects Speech/Screams which sustain energy).
+*   **Sustain Check**: At 60ms, the sound must have decayed to <20% of peak. (Rejects Speech/Screams which sustain energy).
 *   **Early Peak**: The loudest moment must be in the first 60ms. (Rejects "Swells" or "Groans" that ramp up slowly).
-*   **Duration Cap**: Sounds > 200ms are rejected. (Rejects dragging/sliding noises).
+*   **Duration Cap**: Sounds > 300ms are rejected. (Rejects dragging/sliding noises).
 
 ### Step D: Chaos Rejection (Anti-Rattle)
 Random chaotic noise (pill bottles, keys jangling) can statistically align with a profile by chance. Two checks prevent this:
-1.  **Pre-Event Variance**: The 300ms *before* the event is analyzed for coefficient of variation (CV). If CV > 0.15, the signal was already chaotic - reject.
+1.  **Pre-Event Variance**: The 300ms *before* the event is analyzed for coefficient of variation (CV). If CV > 0.25, the signal was already chaotic - reject.
 2.  **Post-Event Quiet**: After the event ends, we wait 50ms and verify the signal has returned to quiet (<50% of threshold). If still noisy, it was part of ongoing chaos - reject.
 
 ### Step E: Spectral Profiling (The Fingerprint)
@@ -49,20 +49,23 @@ The sound is scored against profiles.
 
 ---
 
-## 5. UI Implementation (The "Flux Bar")
+## 5. UI Implementation (Retro Arc Indicator)
 
 The UI separates "Listening" from "Triggering" to prevent user confusion.
 
-1.  **Microphone Circle (Volume)**:
-    *   Pulses with *Raw Input Volume*.
-    *   Always active when listening.
-    *   Shows the user that the microphone is working.
+1.  **Microphone Arc (Volume)**:
+    *   Displays *Raw Input Volume* as a VU meter.
+    *   18 narrow "Skinny Hexagon" segments arranged in a 180-degree arc.
+    *   A thin-ring mic circle sits in the arc center.
 
-2.  **Linear Hexagon Bar (Trigger Logic)**:
-    *   Displays *Percentage of Threshold* (0% to 100%).
-    *   **Physics**: Instant Attack (30ms), Fast Decay (150ms).
-    *   **Visuals**: 24 Vertical "Skinny Hexagons".
-    *   **Behavior**: Only rises when sound approaches the trigger threshold.
+2.  **Detection Arc (Trigger Logic)**:
+    *   Displays confirmed detection pulses only (not raw loudness).
+    *   18 narrow segments arranged in a mirrored 180-degree arc.
+    *   A blue core ring shows two semicircle dots that move toward each other during the pulse.
+    *   A short flash (150ms) fires on detection and always resets cleanly.
+
+3.  **Center Status Text**:
+    *   Friendly rejection messages appear between the arcs for a short time.
 
 ---
 
@@ -106,7 +109,7 @@ The UI separates "Listening" from "Triggering" to prevent user confusion.
 *   `thresholdMultiplier`: **4.0x** (Signal-to-Noise)
 *   `attackThreshold`: **2.0x** (Rise Ratio)
 *   `noiseAlphaFall`: **0.05** (Quick Recovery from loud events)
-*   `preEventVarianceMax`: **0.15** (Max coefficient of variation in pre-event window)
+*   `preEventVarianceMax`: **0.25** (Max coefficient of variation in pre-event window)
 *   `postEventCheckFrames`: **5** (50ms post-event quiet verification delay)
 *   `postEventQuietRatio`: **0.5** (Post-event must drop to <50% of threshold)
 
@@ -160,6 +163,9 @@ To simplify the user experience, detection complexity is abstracted into bundled
 *   **Knock**: Optimizes for lower-frequency solid impacts (knuckles).
 *   **All**: Enables the full spectrum of detection logic.
 
+### General Tab
+*   **Disable Segmented Display**: When enabled, all segmented digits are replaced with standard monospace numbers. Default is segmented display ON.
+
 ### Haptic Hierarchy
 1.  **System Master**: The app respects android `HAPTIC_FEEDBACK_ENABLED`. If the OS setting is off, the app stays silent tactilely.
 2.  **App Override**: Users can disable haptics specifically for the app without changing system settings.
@@ -194,5 +200,5 @@ This ensures that navigating between the "Timer" tab and "Settings" tab (testing
 *   **Allocations**: FFT buffer allocations (`FloatArray`) are moved outside the hot loop to minimize Garbage Collection (GC) pauses during processing.
 *   **Observation Strategy**: The `RunViewModel` separates settings observation (infrequent) from detector state observation (100Hz). This prevents the high-frequency detector updates from triggering expensive re-evaluations of startup logic.
 *   **Idle Ticks**: The `TimerReducer` now short-circuits tick events when the timer is not running, preventing ~1Hz UI recompositions during idle states.
-*   **Log Accumulation**: Detection logs are capped at 200 entries (down from 1000) to reduce memory footprint.
+*   **Log Accumulation**: Detection logs are capped at 750 entries to reduce memory footprint.
 *   **Event Sample Snapshots**: When storing detection events, only the last 50 RMS samples (500ms) are captured instead of the full 150-frame history, reducing per-event memory allocation.

@@ -18,8 +18,8 @@ The log output follows this format:
 | :--- | :--- | :--- | :--- |
 | **0** | **Timestamp** | `HH:mm:ss.SSS` | When the event occurred. |
 | **1** | **Context** | String | The preset name or screen context (e.g., "Egg Timer", "TESTING"). |
-| **2** | **Result** | `DETECTED_[PROFILE]` or `REJECTED`. | Filter by this to see what worked vs failed. |
-| **3** | **Confidence** | `0.00` - `1.00` | Score of the best matching profile. We usually want > 0.60. |
+| **2** | **Result** | `PENDING_[PROFILE]`, `DETECTED_[PROFILE]`, `REJECTED`, or `REJECTED_POST_[PROFILE]`. | `PENDING` means the profile matched and the event is awaiting post-quiet validation. |
+| **3** | **Confidence** | `0.00` - `1.00` | Score of the best matching profile. We usually want >= 0.78. |
 | **4** | **Duration** | Milliseconds (`ms`) | **Snaps:** Short (<50ms). **Speech:** Long (>100ms). |
 | **5** | **RMS** | Root Mean Square (0.0 - 1.0) | The "Volume" or energy of the event. |
 | **6** | **Peak** | Raw Amplitude (0.0 - 1.0) | The absolute loudest point. Useful for clipping detection. |
@@ -40,7 +40,12 @@ The log output follows this format:
     - Is **Centroid** too low? (Maybe < 2000Hz?)
 - Adjust the `SoundProfile` values in `SoundDetector.kt` to encompass these logged values.
 
-### 2. "Clapping triggers it"
+### 2. "I see PENDING but not DETECTED"
+- Look for `REJECTED_POST_` lines after the pending entry.
+- If the **Reason** mentions `Post-Event Noisy`, the room stayed loud after the impact.
+- Reduce background noise or use a sharper, shorter gesture.
+
+### 3. "Clapping triggers it"
 - Look at the `DETECTED_SNAP` lines that were actually claps.
 - Compare them to real snaps.
 - Claps usually have **Longer Duration** or **Lower Centroid**.

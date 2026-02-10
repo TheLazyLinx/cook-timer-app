@@ -1,24 +1,22 @@
 package ro.maris.tools.cooktimer.ui.stopwatch
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -30,11 +28,10 @@ import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.model.Phase
-import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.ui.theme.SoftRed
 import ro.maris.tools.cooktimer.ui.run.StarterHelpOverlay
-import ro.maris.tools.cooktimer.ui.run.RetroSoundIndicator
-import ro.maris.tools.cooktimer.ui.run.SoundDetectionIndicator
+import ro.maris.tools.cooktimer.ui.run.RetroArcSoundIndicator
+import ro.maris.tools.cooktimer.ui.run.NumberDisplay
 
 @Composable
 fun StopwatchScreen(
@@ -54,6 +51,7 @@ fun StopwatchScreen(
     val detectorState by vm.detectorState.collectAsState()
     val settings by vm.settings.collectAsState(initial = null)
     var showHelp by remember { mutableStateOf(false) }
+    val useSegmentedDisplay = settings?.segmentedDisplayEnabled ?: true
     
     // Show help if not shown before
     LaunchedEffect(settings) {
@@ -62,7 +60,7 @@ fun StopwatchScreen(
         }
     }
     
-    var lastState by remember { mutableStateOf(state) }
+    val lastState = remember { mutableStateOf(state) }
 
     DisposableEffect(Unit) {
         vm.onVisibilityChange(true)
@@ -72,7 +70,7 @@ fun StopwatchScreen(
     }
 
     LaunchedEffect(state) {
-        val prev = lastState
+        val prev = lastState.value
         val autoAdvanced = state.activeStepIndex > prev.activeStepIndex && !prev.stepCompleted
         if (prev.phase != Phase.COMPLETED && state.phase == Phase.COMPLETED) {
             sfx.play(SfxId.PresetFinished)
@@ -90,24 +88,12 @@ fun StopwatchScreen(
                 sfx.play(SfxId.StepStart)
             }
         }
-        lastState = state
+    }
+    SideEffect {
+        lastState.value = state
     }
 
     val step = state.activeStep
-    val next = state.nextStep
-
-    val isDarkTheme = isSystemInDarkTheme()
-    val accentButtonColors = ButtonDefaults.buttonColors(
-        containerColor = SoftRed,
-        contentColor = Color.White
-    )
-    val accentTextButtonColors = ButtonDefaults.textButtonColors(
-        contentColor = SoftRed
-    )
-    val timerTextStyle = MaterialTheme.typography.displayLarge.copy(
-        fontFamily = FontFamily.Monospace
-    )
-    val canGoBack = state.activeStepIndex > 0
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -127,15 +113,7 @@ fun StopwatchScreen(
                 state.isReadyToAdvance && state.stopwatchElapsedSec != null ->
                     "Elapsed" to formatTime(requireNotNull(state.stopwatchElapsedSec))
                 state.phase == Phase.READY -> "" to "READY"
-                else -> {
-                    val label = when (state.phase) {
-                        Phase.READY -> "READY"
-                        Phase.PAUSED -> "PAUSED"
-                        Phase.COMPLETED -> "DONE"
-                        Phase.RUNNING -> "RUN"
-                    }
-                    "" to label
-                }
+                else -> "" to "DONE"
             }
 
             Box(
@@ -163,22 +141,28 @@ fun StopwatchScreen(
                         activeColor = SoftRed
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                            NumberDisplay(
                                 text = timerValue,
+                                useSegmentedDisplay = useSegmentedDisplay,
                                 modifier = Modifier.width(180.dp),
-                                segmentColor = SoftRed
+                                segmentColor = SoftRed,
+                                textStyle = MaterialTheme.typography.displayLarge,
+                                textColor = SoftRed
                             )
                             
                             // Lap Counter if Stopwatch
                             val laps = state.laps
-                            if (!laps.isNullOrEmpty()) {
+                            if (laps.isNotEmpty()) {
                                  Spacer(Modifier.height(8.dp))
-                                 ro.maris.tools.cooktimer.ui.run.SixteenSegmentDisplay(
+                                 NumberDisplay(
                                     text = laps.size.toString().padStart(2, '0'),
+                                    useSegmentedDisplay = useSegmentedDisplay,
                                     modifier = Modifier
                                          .height(30.dp)
                                          .width(50.dp),
-                                    segmentColor = SoftRed
+                                    segmentColor = SoftRed,
+                                    textStyle = MaterialTheme.typography.titleMedium,
+                                    textColor = SoftRed
                                 )
                                  Text(
                                     text = "Laps",
@@ -207,13 +191,14 @@ fun StopwatchScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
 
-            if (!step?.notes.isNullOrBlank()) {
+            val notesText = step?.notes
+            if (!notesText.isNullOrBlank()) {
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = step!!.notes!!,
+                        text = notesText,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.widthIn(max = 360.dp)
                     )
@@ -221,10 +206,10 @@ fun StopwatchScreen(
             }
 
             // Retro sound indicator (new default)
-            // Use RetroSoundIndicator instead of SoundDetectionIndicator
-            RetroSoundIndicator(
+            RetroArcSoundIndicator(
                 state = detectorState, 
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                isPaused = state.phase == Phase.PAUSED
             )
 
             // Laps List

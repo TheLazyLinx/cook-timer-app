@@ -16,13 +16,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import ro.maris.tools.cooktimer.ui.run.NumberDisplay
+import ro.maris.tools.cooktimer.ui.theme.SoftRed
 
 @Composable
 fun DurationPicker(
     durationSec: Int,
-    onDurationChange: (Int) -> Unit
+    onDurationChange: (Int) -> Unit,
+    useSegmentedDisplay: Boolean
 ) {
     val hrs = durationSec / 3600
     val mins = (durationSec % 3600) / 60
@@ -40,12 +42,14 @@ fun DurationPicker(
                 onDurationChange(newDuration.coerceAtLeast(0))
             },
             label = "h",
-            range = 0..99
+            range = 0..99,
+            useSegmentedDisplay = useSegmentedDisplay
         )
         Text(
             text = ":",
             style = MaterialTheme.typography.displayMedium,
-            modifier = Modifier.padding(horizontal = 8.dp)
+            modifier = Modifier.padding(horizontal = 8.dp),
+            color = SoftRed
         )
         TimeUnitColumn(
             value = mins,
@@ -54,12 +58,14 @@ fun DurationPicker(
                 onDurationChange(newDuration.coerceAtLeast(0))
             },
             label = "m",
-            range = 0..59
+            range = 0..59,
+            useSegmentedDisplay = useSegmentedDisplay
         )
         Text(
             text = ":",
             style = MaterialTheme.typography.displayMedium,
-            modifier = Modifier.padding(horizontal = 8.dp)
+            modifier = Modifier.padding(horizontal = 8.dp),
+            color = SoftRed
         )
         TimeUnitColumn(
             value = secs,
@@ -68,7 +74,8 @@ fun DurationPicker(
                 onDurationChange(newDuration.coerceAtLeast(0))
             },
             label = "s",
-            range = 0..59
+            range = 0..59,
+            useSegmentedDisplay = useSegmentedDisplay
         )
     }
 }
@@ -78,36 +85,50 @@ private fun TimeUnitColumn(
     value: Int,
     onValueChange: (Int) -> Unit,
     label: String,
-    range: IntRange
+    range: IntRange,
+    useSegmentedDisplay: Boolean
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = Modifier.width(60.dp)
+        modifier = Modifier.width(72.dp)
     ) {
         IconButton(onClick = {
             val next = if (value + 1 > range.last) range.first else value + 1
             onValueChange(next)
         }) {
-            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Increase")
+            Icon(
+                Icons.Filled.KeyboardArrowUp,
+                contentDescription = "Increase",
+                tint = SoftRed
+            )
         }
         
-        Text(
+        NumberDisplay(
             text = "%02d".format(value),
-            style = MaterialTheme.typography.displayMedium
+            useSegmentedDisplay = useSegmentedDisplay,
+            modifier = Modifier.width(56.dp),
+            segmentColor = SoftRed,
+            spacing = 2.dp,
+            textStyle = MaterialTheme.typography.displaySmall,
+            textColor = SoftRed
         )
         
         IconButton(onClick = {
             val prev = if (value - 1 < range.first) range.last else value - 1
             onValueChange(prev)
         }) {
-            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Decrease")
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Decrease",
+                tint = SoftRed
+            )
         }
         
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = SoftRed
         )
     }
 }

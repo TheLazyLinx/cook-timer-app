@@ -142,6 +142,41 @@ fun SettingsScreen(
                         )
                     }
                 }
+
+                // Display Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Display",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = "Use standard numbers instead of segmented digits",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Disable Segmented Display")
+                            Switch(
+                                checked = !settings.segmentedDisplayEnabled,
+                                onCheckedChange = { checked ->
+                                    vm.setSegmentedDisplayEnabled(!checked)
+                                }
+                            )
+                        }
+                    }
+                }
             } else {
                 // Sound Effects Section
                 Card(
