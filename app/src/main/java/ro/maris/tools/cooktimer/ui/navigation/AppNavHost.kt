@@ -20,8 +20,8 @@ import ro.maris.tools.cooktimer.ui.run.RunScreen
 import ro.maris.tools.cooktimer.ui.run.RunViewModel
 import ro.maris.tools.cooktimer.ui.settings.SettingsScreen
 import ro.maris.tools.cooktimer.ui.settings.SettingsViewModel
-import ro.maris.tools.cooktimer.ui.sound.SoundTestScreen
-import ro.maris.tools.cooktimer.ui.sound.SoundTestViewModel
+import ro.maris.tools.cooktimer.ui.sound.DiagnosticScreen
+import ro.maris.tools.cooktimer.ui.sound.DiagnosticViewModel
 import ro.maris.tools.cooktimer.ui.soundwave.SoundwaveScreen
 import ro.maris.tools.cooktimer.ui.soundwave.SoundwaveViewModel
 
@@ -31,7 +31,7 @@ object Routes {
     const val STOPWATCH = "stopwatch"
     const val EDIT = "edit"
     const val RUN = "run"
-    const val SOUND_TEST = "sound_test"
+    const val DIAGNOSTICS = "diagnostics"
     const val SETTINGS = "settings"
     const val SOUNDWAVE = "soundwave"
 }
@@ -104,9 +104,9 @@ fun AppNavHost(
                 }
             )
         }
-        composable(Routes.SOUND_TEST) {
-            val vm: SoundTestViewModel = hiltViewModel()
-            SoundTestScreen(
+        composable(Routes.DIAGNOSTICS) {
+            val vm: DiagnosticViewModel = hiltViewModel()
+            DiagnosticScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() }
             )
@@ -116,7 +116,8 @@ fun AppNavHost(
             SettingsScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() },
-                onSoundwave = { navController.navigate(Routes.SOUNDWAVE) }
+                onSoundwave = { navController.navigate(Routes.SOUNDWAVE) },
+                onDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) }
             )
         }
         composable(Routes.SOUNDWAVE) {

@@ -50,7 +50,8 @@ data class SoundDetectorState(
     val lastRejectionReason: String? = null,
     val debugInfo: String = "",
     val events: List<SoundDetectionEvent> = emptyList(),
-    val logs: List<String> = emptyList()
+    val logs: List<String> = emptyList(),
+    val diagnostics: List<DetectionDiagnostic> = emptyList()
 )
 
 @Singleton
@@ -78,6 +79,7 @@ class SoundDetector @Inject constructor(
     private val noiseAlphaFall = 0.050f // Increased fall speed to recover faster from "Snap Sprees"
     private val maxEvents = 50 // Increased history size
     private val maxLogs = 750 // Limit logs to prevent memory bloat
+    private val maxDiagnostics = 100 // Diagnostic entries for tuning screen
     private val confidenceThreshold = 0.78f // Raised from 0.75 to 0.78 to cut marginal Speech FPs (like the 76% one)
     
     // Chaos Rejection (Pill Rattle, Continuous Noise)
@@ -220,7 +222,27 @@ class SoundDetector @Inject constructor(
     }
 
     fun clearHistory() {
-        _state.update { it.copy(events = emptyList(), count = 0, lastConfidence = 0f, lastRejectionReason = null, debugInfo = "", logs = emptyList()) }
+        _state.update { it.copy(events = emptyList(), count = 0, lastConfidence = 0f, lastRejectionReason = null, debugInfo = "", logs = emptyList(), diagnostics = emptyList()) }
+    }
+
+    fun clearDiagnostics() {
+        _state.update { it.copy(diagnostics = emptyList()) }
+    }
+
+    fun updateDiagnosticNote(id: Long, note: String) {
+        _state.update { current ->
+            current.copy(
+                diagnostics = current.diagnostics.map { diag ->
+                    if (diag.id == id) diag.copy(note = note) else diag
+                }
+            )
+        }
+    }
+
+    private fun emitDiagnostic(diagnostic: DetectionDiagnostic) {
+        _state.update { current ->
+            current.copy(diagnostics = (listOf(diagnostic) + current.diagnostics).take(maxDiagnostics))
+        }
     }
 
     /**
@@ -322,11 +344,71 @@ class SoundDetector @Inject constructor(
         var preEventNoiseAvg = 0f
         var consecutiveLoudFrames = 0
         
+        // Frame counter for chaos-gate exclusion
+        var frameCounter = 0L
+        var lastDetectionEndFrame = -1000L  // Frame at which last confirmed detection ended
+        var lastDetectionDurationFrames = 0  // How many frames the last detection occupied
+        
         // Post-Event Quiet Check State (for chaos rejection)
         var postEventCheckCountdown = 0
         var pendingEvent: SoundDetectionEvent? = null
         var pendingEventLogEntry: String? = null
         var thresholdAtEventEnd = 0f
+        var pendingProfileScores: List<ProfileScore> = emptyList()
+        
+        // Diagnostic capture vars (saved at trigger time for use at rejection/acceptance)
+        var eventTriggerRms = 0f
+        var eventAttackRatio = 0f
+        var eventNoiseFloorAtTrigger = 0f
+        var eventThresholdAtTrigger = 0f
+        
+        // Local diagnostic helper — captures event-scope vars by reference
+        fun emitEventDiag(
+            rejectedAt: String?,
+            rejectionDetail: String?,
+            sustainRatio: Float? = null,
+            decayRatio: Float? = null,
+            preEventCV: Float? = null,
+            postEventRms: Float? = null,
+            postEventQuietThreshold: Float? = null,
+            bestProfileName: String? = null,
+            bestConfidence: Float = 0f,
+            allProfileScores: List<ProfileScore> = emptyList(),
+            overrideDurationMs: Int? = null,
+            overrideAvgZcr: Float? = null,
+            overrideAvgCentroid: Float? = null,
+            overrideAvgTilt: Float? = null,
+            overridePreEventNoiseAvg: Float? = null
+        ) {
+            val frames = eventHighRmsFrames.coerceAtLeast(1)
+            emitDiagnostic(DetectionDiagnostic(
+                id = SystemClock.elapsedRealtime(),
+                timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()),
+                outcome = if (rejectedAt == null) "ACCEPTED" else "REJECTED",
+                rejectedAt = rejectedAt,
+                rejectionDetail = rejectionDetail,
+                noiseFloor = eventNoiseFloorAtTrigger,
+                threshold = eventThresholdAtTrigger,
+                preEventNoiseAvg = overridePreEventNoiseAvg ?: preEventNoiseAvg,
+                triggerRms = eventTriggerRms,
+                attackRatio = eventAttackRatio,
+                durationMs = overrideDurationMs ?: (frames * windowMs),
+                peakRms = eventPeakRms,
+                peakRaw = eventPeakRaw,
+                sustainRatio = sustainRatio,
+                decayRatio = decayRatio,
+                peakFrameIndex = frames - framesSincePeak,
+                preEventCV = preEventCV,
+                postEventRms = postEventRms,
+                postEventQuietThreshold = postEventQuietThreshold,
+                avgZcr = overrideAvgZcr ?: (eventAccumulatedZcr / frames),
+                avgCentroid = overrideAvgCentroid ?: (eventAccumulatedCentroid / frames),
+                avgTilt = overrideAvgTilt ?: (eventAccumulatedTilt / frames),
+                bestProfileName = bestProfileName,
+                bestConfidence = bestConfidence,
+                allProfileScores = allProfileScores
+            ))
+        }
         
         try {
             currentRecorder.startRecording()
@@ -516,6 +598,7 @@ class SoundDetector @Inject constructor(
                     if (eventHighRmsFrames == 5 || eventHighRmsFrames == 6) {
                         val ratio = if (eventPeakRms > 0) rmsF / eventPeakRms else 0f
                         if (ratio > 0.5f) {
+                            if (isMonitoringEvent) emitEventDiag("SUSTAIN", "Ratio ${"%.2f".format(ratio)} at ${eventHighRmsFrames*windowMs}ms (>0.50)", sustainRatio = ratio)
                             Log.d("SoundDetector", "Rejected: Sustained/Speech (Ratio $ratio at ${eventHighRmsFrames*10}ms)")
                             isMonitoringEvent = false
                         }
@@ -526,6 +609,7 @@ class SoundDetector @Inject constructor(
                     // Exception: Very long events might have multiple peaks, but we assume impulse snaps peak early.
                     val framesAtPeak = eventHighRmsFrames - framesSincePeak
                     if (framesAtPeak > 6 && rmsF > threshold * 2.0f) { // Only strict on loud sounds
+                          if (isMonitoringEvent) emitEventDiag("LATE_PEAK", "Peak at frame $framesAtPeak (${framesAtPeak*windowMs}ms into event)")
                           Log.d("SoundDetector", "Rejected: Slow Intensity Rise (Peak at ${framesAtPeak*10}ms)")
                           isMonitoringEvent = false
                     }
@@ -541,6 +625,7 @@ class SoundDetector @Inject constructor(
                         // Ignore rebound check for very short events (like snaps) which are messy by nature
                         val currentDurationMs = eventHighRmsFrames * windowMs
                         if (currentDurationMs > 150) {
+                            if (isMonitoringEvent) emitEventDiag("REBOUND", "Double peak at ${currentDurationMs}ms")
                             Log.d("SoundDetector", "Rejected: Bouncy signal (multiple peaks)")
                             isMonitoringEvent = false
                         }
@@ -550,6 +635,7 @@ class SoundDetector @Inject constructor(
                     val currentDurationMs = eventHighRmsFrames * windowMs
                     // Use the longest possible profile as the absolute max to stop checking early
                     if (currentDurationMs > 300) { 
+                        if (isMonitoringEvent) emitEventDiag("DURATION", "Too long: ${currentDurationMs}ms > 300ms")
                         Log.d("SoundDetector", "Rejected: Too long ($currentDurationMs ms)")
                         isMonitoringEvent = false // Reset
                     }
@@ -559,6 +645,7 @@ class SoundDetector @Inject constructor(
                     if (framesSincePeak == decayCheckFrame) {
                         val ratio = if (eventPeakRms > 0) rmsF / eventPeakRms else 0f
                         if (ratio > 0.2f) { // Tail > 20% of peak
+                            if (isMonitoringEvent) emitEventDiag("DECAY", "Ratio ${"%.2f".format(ratio)} > 0.20 at 60ms post-peak", decayRatio = ratio)
                             Log.d("SoundDetector", "Rejected: Decay too slow (ratio $ratio at 60ms)")
                             isMonitoringEvent = false
                         }
@@ -572,6 +659,7 @@ class SoundDetector @Inject constructor(
                     
                     var bestMatch: SoundProfile? = null
                     var bestConfidence = 0f
+                    val allScores = mutableListOf<ProfileScore>()
                     
                     // Profile Matching (Confidence Based)
                     for (profile in profiles) {
@@ -583,6 +671,8 @@ class SoundDetector @Inject constructor(
                         
                         // Weighted Average (Equal weights for now)
                         val confidence = (sDur + sZcr + sCentroid + sTilt) / 4f
+                        
+                        allScores.add(ProfileScore(profile.name, confidence, sDur, sZcr, sCentroid, sTilt))
                         
                         if (confidence > bestConfidence) {
                             bestConfidence = confidence
@@ -598,6 +688,11 @@ class SoundDetector @Inject constructor(
                          val topScore = (bestConfidence * 100).toInt()
                          rejectionReason = "Low Confidence: $topMatchName ($topScore%) D:${durationMs}ms Z:${"%.2f".format(avgZcr)} C:${"%.0f".format(avgCentroid)}"
                          Log.d("SoundDetector", "Rejected: $rejectionReason")
+                         emitEventDiag("LOW_CONFIDENCE", rejectionReason,
+                             overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
+                             overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                             bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
+                             allProfileScores = allScores)
                     }
                     
                     // 3. Pre-Event Isolation Check (Global for all profiles)
@@ -610,6 +705,11 @@ class SoundDetector @Inject constructor(
                              rejectionReason = "Artifact: Wake-up pop (Pre-noise is digital silence)"
                              Log.d("SoundDetector", "Rejected: $rejectionReason")
                              isValid = false
+                             emitEventDiag("ARTIFACT", rejectionReason,
+                                 overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
+                                 overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                 bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
+                                 allProfileScores = allScores)
                         } else {
                             val preEventRatio = if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f
                             
@@ -622,36 +722,63 @@ class SoundDetector @Inject constructor(
                                 rejectionReason = "Isolation/PreNoise: ${"%.2f".format(preEventRatio)} > ${"%.2f".format(allowedRatio)}"
                                 Log.d("SoundDetector", "Rejected: $rejectionReason")
                                 isValid = false
+                                emitEventDiag("ISOLATION", rejectionReason,
+                                    overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
+                                    overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                    bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
+                                    allProfileScores = allScores)
                             }
                         }
                     }
                     
-                    // 4. Pre-Event Variance Check (Chaos/Rattle Rejection)
-                    // If the signal BEFORE the event was highly variable, it's likely ongoing noise
+                    // 4. Pre-Event Spike Check (Chaos/Rattle Rejection)
+                    // Reject if the 300ms before the event had multiple spikes above 
+                    // the detection threshold. This catches pill bottles, key jangling, etc.
+                    // Does NOT use CV (scale-invariant variance) because quiet-room 
+                    // micro-jitter inflates CV to 2.0+ even in total silence.
+                    // Frames belonging to a prior confirmed detection are excluded
+                    // so that double-tap patterns (snap-snap) aren't blocked.
                     if (isValid) {
                         val lookbackForVariance = 30 // 300ms lookback
                         val gapFrames = 3
                         val available = recentSamples.size
                         
-                        val preEventValues = mutableListOf<Float>()
+                        // How many frames ago did the last confirmed detection end?
+                        val framesAgoDetectionEnd = (frameCounter - lastDetectionEndFrame).toInt()
+                        // The range of frames (as indices from current) that belong to the last detection
+                        val detectionExcludeStart = framesAgoDetectionEnd - lastDetectionDurationFrames
+                        val detectionExcludeEnd = framesAgoDetectionEnd
+                        
+                        // Count how many frames in the pre-event window exceeded 
+                        // a fraction of the detection threshold (actual loud noise)
+                        val spikeThreshold = threshold * 0.5f
+                        var spikeCount = 0
+                        var totalChecked = 0
+                        
                         for (j in gapFrames until lookbackForVariance) {
                             if (available - 1 - j >= 0) {
-                                preEventValues.add(recentSamples[available - 1 - j])
+                                // Skip frames that were part of the last confirmed detection
+                                if (j in detectionExcludeStart..detectionExcludeEnd) continue
+                                
+                                val sample = recentSamples[available - 1 - j]
+                                totalChecked++
+                                if (sample > spikeThreshold) spikeCount++
                             }
                         }
                         
-                        if (preEventValues.size >= 10) {
-                            val mean = preEventValues.average().toFloat()
-                            val variance = preEventValues.map { (it - mean) * (it - mean) }.average().toFloat()
-                            val stdDev = sqrt(variance)
-                            // Coefficient of Variation (normalized variance)
-                            val cv = if (mean > 0.001f) stdDev / mean else 0f
-                            
-                            if (cv > preEventVarianceMax) {
-                                rejectionReason = "Chaotic Pre-Event: CV=${"%.2f".format(cv)} > $preEventVarianceMax"
-                                Log.d("SoundDetector", "Rejected: $rejectionReason")
-                                isValid = false
-                            }
+                        // If >25% of pre-event frames had spikes above half-threshold,
+                        // the environment was actively noisy — reject.
+                        val spikeRatio = if (totalChecked > 0) spikeCount.toFloat() / totalChecked else 0f
+                        if (totalChecked >= 10 && spikeRatio > 0.25f) {
+                            rejectionReason = "Chaotic Pre-Event: $spikeCount/$totalChecked frames above ${"%.4f".format(spikeThreshold)} (${(spikeRatio * 100).toInt()}%)"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            emitEventDiag("CHAOS_PRE", rejectionReason,
+                                preEventCV = spikeRatio,
+                                overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
+                                allProfileScores = allScores)
                         }
                     }
 
@@ -686,6 +813,7 @@ class SoundDetector @Inject constructor(
                         pendingEventLogEntry = logEntry.replace("PENDING_", "DETECTED_")
                         postEventCheckCountdown = postEventCheckFrames
                         thresholdAtEventEnd = threshold
+                        pendingProfileScores = allScores
                     } else if (rejectionReason != null) {
                          // Update state with rejection reason to help debugging
                         _state.update { current ->
@@ -721,6 +849,28 @@ class SoundDetector @Inject constructor(
                                 // CONFIRMED DETECTION
                                 Log.i("SoundDetector", "Confirmed ${pending.type} (${(pending.confidence*100).toInt()}%)! Post-event quiet.")
                                 
+                                // Record when this detection ended so the chaos gate
+                                // can skip these frames for the next event
+                                lastDetectionEndFrame = frameCounter
+                                lastDetectionDurationFrames = (pending.durationMs / windowMs) + postEventCheckFrames + 3 // event + post-check + margin
+                                
+                                // Emit accepted diagnostic
+                                val savedScores = pendingProfileScores
+                                emitDiagnostic(DetectionDiagnostic(
+                                    id = SystemClock.elapsedRealtime(),
+                                    timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()),
+                                    outcome = "ACCEPTED", rejectedAt = null, rejectionDetail = null,
+                                    noiseFloor = eventNoiseFloorAtTrigger, threshold = eventThresholdAtTrigger,
+                                    preEventNoiseAvg = preEventNoiseAvg,
+                                    triggerRms = eventTriggerRms, attackRatio = eventAttackRatio,
+                                    durationMs = pending.durationMs, peakRms = pending.strength, peakRaw = pending.peak,
+                                    sustainRatio = null, decayRatio = null, peakFrameIndex = 0,
+                                    postEventRms = rmsF, postEventQuietThreshold = thresholdAtEventEnd * postEventQuietRatio,
+                                    avgZcr = 0f, avgCentroid = pending.centroid, avgTilt = pending.tilt,
+                                    bestProfileName = pending.type, bestConfidence = pending.confidence,
+                                    allProfileScores = savedScores
+                                ))
+                                
                                 _state.update { current ->
                                     val updated = (listOf(pending) + current.events).take(maxEvents)
                                     val updatedLogs = (current.logs + logEntryForEvent).takeLast(maxLogs)
@@ -749,6 +899,23 @@ class SoundDetector @Inject constructor(
                                 val postRejectReason = "Post-Event Noisy: ${"%.3f".format(rmsF)} > ${"%.3f".format(thresholdAtEventEnd * postEventQuietRatio)}"
                                 Log.d("SoundDetector", "Rejected: $postRejectReason")
                                 
+                                // Emit post-event rejection diagnostic
+                                val savedScores = pendingProfileScores
+                                emitDiagnostic(DetectionDiagnostic(
+                                    id = SystemClock.elapsedRealtime(),
+                                    timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()),
+                                    outcome = "REJECTED", rejectedAt = "CHAOS_POST", rejectionDetail = postRejectReason,
+                                    noiseFloor = eventNoiseFloorAtTrigger, threshold = eventThresholdAtTrigger,
+                                    preEventNoiseAvg = preEventNoiseAvg,
+                                    triggerRms = eventTriggerRms, attackRatio = eventAttackRatio,
+                                    durationMs = pending.durationMs, peakRms = pending.strength, peakRaw = pending.peak,
+                                    sustainRatio = null, decayRatio = null, peakFrameIndex = 0,
+                                    postEventRms = rmsF, postEventQuietThreshold = thresholdAtEventEnd * postEventQuietRatio,
+                                    avgZcr = 0f, avgCentroid = pending.centroid, avgTilt = pending.tilt,
+                                    bestProfileName = pending.type, bestConfidence = pending.confidence,
+                                    allProfileScores = savedScores
+                                ))
+                                
                                 val rejectedLog = logEntryForEvent.replace("DETECTED_", "REJECTED_POST_") + "|$postRejectReason"
                                 _state.update { current ->
                                     val updatedLogs = (current.logs + rejectedLog).takeLast(maxLogs)
@@ -764,6 +931,7 @@ class SoundDetector @Inject constructor(
                         
                         pendingEvent = null
                         pendingEventLogEntry = null
+                        pendingProfileScores = emptyList()
                     }
                 }
                 
@@ -797,6 +965,10 @@ class SoundDetector @Inject constructor(
                         eventPeakRaw = peakNorm.toFloat()
                         framesSincePeak = 0
                         hasDippedFromPeak = false
+                        eventTriggerRms = rmsF
+                        eventAttackRatio = riseRatio
+                        eventNoiseFloorAtTrigger = noiseFloor
+                        eventThresholdAtTrigger = threshold
                         
                         // Capture pre-event noise level
                         // Reverted deep lookback to 120ms to keep it snappy.
@@ -833,6 +1005,7 @@ class SoundDetector @Inject constructor(
             if (recentSamples.size > maxRecentSamples) {
                 recentSamples.removeAt(0)
             }
+            frameCounter++
 
             _state.update { current ->
                 current.copy(rms = rmsF, noiseFloor = noiseFloor, currentRms = rmsF)

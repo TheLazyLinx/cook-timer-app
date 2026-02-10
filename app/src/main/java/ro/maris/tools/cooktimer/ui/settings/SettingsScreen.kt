@@ -63,7 +63,8 @@ import ro.maris.tools.cooktimer.domain.model.ThemeMode
 fun SettingsScreen(
     vm: SettingsViewModel,
     onBack: () -> Unit,
-    onSoundwave: () -> Unit
+    onSoundwave: () -> Unit,
+    onDiagnostics: () -> Unit = {}
 ) {
     val settings by vm.settings.collectAsState()
     val focusManager = LocalFocusManager.current
@@ -325,7 +326,7 @@ fun SettingsScreen(
                 
                 // Sound Test Section
                 if (settings.soundDetectionEnabled) {
-                    SoundTestSection(vm = vm, onSoundwave = onSoundwave)
+                    SoundTestSection(vm = vm, onSoundwave = onSoundwave, onDiagnostics = onDiagnostics)
                 }
 
                 // Informational Card
@@ -504,7 +505,7 @@ private fun SoundTriggerAction.toDisplayString(): String = when (this) {
 }
 
 @Composable
-private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit) {
+private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit, onDiagnostics: () -> Unit) {
     val detectorState by vm.detectorState.collectAsState()
     val context = LocalContext.current
     var permissionGranted by remember { mutableStateOf(false) }
@@ -636,6 +637,14 @@ private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("View Soundwave Visualization")
+                        }
+                        
+                        // Button to open diagnostic screen
+                        Button(
+                            onClick = onDiagnostics,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Sound Diagnostics")
                         }
                     }
                 }
