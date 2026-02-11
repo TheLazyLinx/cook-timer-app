@@ -202,7 +202,7 @@ fun StopwatchScreen(
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            HorizontalDivider()
+            HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

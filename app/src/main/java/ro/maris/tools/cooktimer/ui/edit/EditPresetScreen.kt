@@ -33,6 +33,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -96,6 +97,7 @@ fun EditPresetScreen(
                     }
                     OutlinedButton(
                         onClick = sfxClick(sfx) {
+                            focusManager.clearFocus(force = true)
                             vm.addStep()
                             sfx.play(SfxId.StepAdded)
                         },
@@ -154,6 +156,14 @@ fun EditPresetScreen(
             val firstVisibleId by remember(state.steps, listState) {
                 derivedStateOf { state.steps.getOrNull(listState.firstVisibleItemIndex)?.id }
             }
+            
+            // Scroll to newly added step to ensure it's composed before interaction
+            LaunchedEffect(state.steps.size) {
+                if (state.steps.isNotEmpty()) {
+                    listState.animateScrollToItem(state.steps.size - 1)
+                }
+            }
+            
             LazyColumn(
                 modifier = Modifier.weight(1f, fill = true),
                 state = listState,
