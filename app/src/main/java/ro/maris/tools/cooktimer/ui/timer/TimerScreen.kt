@@ -218,7 +218,7 @@ fun TimerScreen(
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            HorizontalDivider()
+            HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
 
             if (next != null) {
                 Text(

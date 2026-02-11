@@ -201,7 +201,7 @@ fun RunScreen(
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            HorizontalDivider()
+            HorizontalDivider(modifier = Modifier.padding(top = 16.dp))
             Text(
                 text = "Next: ${next?.title ?: "-"}",
                 style = MaterialTheme.typography.bodyMedium,

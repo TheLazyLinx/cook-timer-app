@@ -1049,7 +1049,7 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
-                                bestProfileName = bestMatch.name,
+                                bestProfileName = bestMatch?.name,
                                 bestConfidence = bestConfidence,
                                 allProfileScores = allScores
                             )
@@ -1250,7 +1250,7 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
-                                bestProfileName = bestMatch.name,
+                                bestProfileName = bestMatch?.name,
                                 bestConfidence = bestConfidence,
                                 allProfileScores = allScores
                             )
