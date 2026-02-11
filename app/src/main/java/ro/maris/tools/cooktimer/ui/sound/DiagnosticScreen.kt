@@ -509,6 +509,21 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
     var showNoteDialog by remember { mutableStateOf(false) }
     val stageInfo = stageColors[diag.stageLabel] ?: StageInfo(diag.stageLabel, Color.Gray)
     val isAccepted = diag.outcome == "ACCEPTED"
+    val gestureKind = when (diag.gestureTapCount) {
+        3 -> "TRIPLE"
+        2 -> "DOUBLE"
+        1 -> "SINGLE"
+        else -> null
+    }
+    val gestureBracket = if (
+        diag.gestureGroupId != null &&
+        diag.gestureTapIndex != null &&
+        diag.gestureTapCount != null
+    ) {
+        "[G${diag.gestureGroupId}:${diag.gestureTapIndex}/${diag.gestureTapCount}]"
+    } else {
+        null
+    }
 
     if (showNoteDialog) {
         NoteDialog(
@@ -556,6 +571,25 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
                         )
                     )
                 }
+                if (gestureBracket != null) {
+                    Spacer(Modifier.width(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF455A64))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            gestureBracket,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        )
+                    }
+                }
                 Spacer(Modifier.width(6.dp))
                 // Key metrics
                 Text(
@@ -594,6 +628,26 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
                     if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = "Expand",
                     modifier = Modifier.size(18.dp)
+                )
+            }
+
+            if (gestureKind != null) {
+                Text(
+                    buildString {
+                        append("Gesture: ")
+                        append(gestureKind)
+                        if (diag.gestureUnpairedReason != null) {
+                            append(" - ")
+                            append(diag.gestureUnpairedReason)
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = if (gestureKind == "SINGLE") Color(0xFFFFA000) else Color(0xFF455A64),
+                        fontSize = 11.sp
+                    ),
+                    maxLines = if (expanded) 3 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
             }
 
@@ -675,6 +729,15 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
                     MetricRow("Avg ZCR", "%.3f".format(diag.avgZcr))
                     MetricRow("Avg Centroid", "%.0f Hz".format(diag.avgCentroid))
                     MetricRow("Avg Tilt", "%.2f".format(diag.avgTilt))
+
+                    if (gestureKind != null) {
+                        SectionHeader("Gesture Pairing")
+                        val pairGroup = "G${diag.gestureGroupId ?: "-"}"
+                        val pairPos = "${diag.gestureTapIndex ?: "-"}/${diag.gestureTapCount ?: "-"}"
+                        MetricRow("Group", "$pairGroup  $pairPos")
+                        MetricRow("Resolved As", gestureKind)
+                        diag.gestureUnpairedReason?.let { MetricRow("Not Grouped Why", it) }
+                    }
 
                     // Profile Scores
                     if (diag.allProfileScores.isNotEmpty()) {

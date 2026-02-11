@@ -48,7 +48,6 @@ private const val RetroDetectionAttackMs = 80
 private const val RetroDetectionDecayMs = 220
 private const val RetroVuDecayMs = 70
 private const val RetroGapScale = 0.65f
-private val RetroCenterTextWidth = 180.dp
 private val RetroGreen = Color(0xFF29C16F)
 private val RetroBlue = Color(0xFF374CFF)
 private val RetroBlueFlash = Color(0xFF6B7BFF)
@@ -159,76 +158,88 @@ fun RetroArcSoundIndicator(
     }
     val showWarning = showError
 
-    Row(
-        modifier = modifier.height(indicatorSize),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        HexArcIndicator(
-            size = indicatorSize,
-            segmentCount = RetroSegmentCount,
-            progress = vuProgress,
-            activeColor = RetroGreen,
-            inactiveAlpha = 0.12f,
-            startAngleDeg = 90f,
-            sweepAngleDeg = 180f,
-            coreScale = 0.58f
-        ) { coreSize ->
-            val iconSize = coreSize * 0.45f
+    BoxWithConstraints(modifier = modifier.height(indicatorSize)) {
+        val resolvedIndicatorSize = (maxWidth * 0.22f).coerceIn(56.dp, indicatorSize)
+
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Box(
-                modifier = Modifier
-                    .size(coreSize)
-                    .border(2.dp, RetroGreen.copy(alpha = 0.7f), CircleShape)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surface),
+                modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (showWarning) Icons.Default.Warning else Icons.Default.Mic,
-                    contentDescription = null,
-                    tint = if (showWarning) MaterialTheme.colorScheme.error else RetroGreen.copy(alpha = micAlpha),
-                    modifier = Modifier.size(iconSize)
-                )
+                HexArcIndicator(
+                    size = resolvedIndicatorSize,
+                    segmentCount = RetroSegmentCount,
+                    progress = vuProgress,
+                    activeColor = RetroGreen,
+                    inactiveAlpha = 0.12f,
+                    startAngleDeg = 90f,
+                    sweepAngleDeg = 180f,
+                    coreScale = 0.58f
+                ) { coreSize ->
+                    val iconSize = coreSize * 0.45f
+                    Box(
+                        modifier = Modifier
+                            .size(coreSize)
+                            .border(2.dp, RetroGreen.copy(alpha = 0.7f), CircleShape)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (showWarning) Icons.Default.Warning else Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = if (showWarning) MaterialTheme.colorScheme.error else RetroGreen.copy(alpha = micAlpha),
+                            modifier = Modifier.size(iconSize)
+                        )
+                    }
+                }
             }
-        }
 
-        Spacer(modifier = Modifier.width(24.dp))
-        Box(
-            modifier = Modifier
-                .width(RetroCenterTextWidth)
-                .height(indicatorSize),
-            contentAlignment = Alignment.Center
-        ) {
-            if (showError && errorMessage != null) {
-                Text(
-                    text = errorMessage,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2
-                )
+            Box(
+                modifier = Modifier
+                    .weight(1.3f)
+                    .fillMaxHeight(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (showError && errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
+                    )
+                }
             }
-        }
-        Spacer(modifier = Modifier.width(24.dp))
 
-        HexArcIndicator(
-            size = indicatorSize,
-            segmentCount = RetroSegmentCount,
-            progress = detectionProgress,
-            activeColor = RetroBlue,
-            inactiveAlpha = 0.12f,
-            startAngleDeg = -90f,
-            sweepAngleDeg = 180f,
-            coreScale = 0.58f
-        ) { coreSize ->
-            DetectionCore(
-                size = coreSize,
-                progress = detectionProgress,
-                flashOn = flashOn,
-                borderColor = RetroBlue,
-                fillColor = RetroBlueFlash,
-                backgroundColor = MaterialTheme.colorScheme.surface
-            )
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                HexArcIndicator(
+                    size = resolvedIndicatorSize,
+                    segmentCount = RetroSegmentCount,
+                    progress = detectionProgress,
+                    activeColor = RetroBlue,
+                    inactiveAlpha = 0.12f,
+                    startAngleDeg = -90f,
+                    sweepAngleDeg = 180f,
+                    coreScale = 0.58f
+                ) { coreSize ->
+                    DetectionCore(
+                        size = coreSize,
+                        progress = detectionProgress,
+                        flashOn = flashOn,
+                        borderColor = RetroBlue,
+                        fillColor = RetroBlueFlash,
+                        backgroundColor = MaterialTheme.colorScheme.surface
+                    )
+                }
+            }
         }
     }
 }

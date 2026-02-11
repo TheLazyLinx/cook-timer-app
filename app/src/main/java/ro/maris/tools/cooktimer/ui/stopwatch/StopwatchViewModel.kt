@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.SoundDetector
+import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
 import ro.maris.tools.cooktimer.audio.SfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
@@ -23,6 +24,7 @@ import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
+import ro.maris.tools.cooktimer.ui.sound.SoundTapGestureRecognizer
 import javax.inject.Inject
 import java.util.UUID
 
@@ -38,6 +40,7 @@ class StopwatchViewModel @Inject constructor(
 ) : ViewModel() {
 
     private var lastRejectionReason: String? = null
+    private var lastHandledDetectionCount = 0
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -49,11 +52,32 @@ class StopwatchViewModel @Inject constructor(
     val settings = settingsRepository.observeSettings()
     private val _isScreenVisible = MutableStateFlow(false)
 
-    private var lastDetectionTimestamp = 0L
-    private val minDetectionIntervalMs = 1000L
+    private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
+        tapCount.tapTimestamps.forEachIndexed { index, timestampMs ->
+            soundDetector.annotateGestureForEvent(
+                eventTimestampMs = timestampMs,
+                groupId = tapCount.groupId,
+                tapIndex = index + 1,
+                tapCount = tapCount.tapCount,
+                unpairedReason = tapCount.unpairedReason
+            )
+        }
+        val handled = when {
+            tapCount.tapCount >= 3 -> handleTripleTap()
+            tapCount.tapCount >= 2 -> handleSoundTrigger(SoundTriggerAction.TOGGLE_PLAY_PAUSE)
+            else -> false
+        }
+        if (handled) {
+            sfxPlayer.play(SfxId.DetectionSuccess)
+        }
+    }
 
     fun onVisibilityChange(visible: Boolean) {
         _isScreenVisible.value = visible
+        if (!visible) {
+            tapRecognizer.clear()
+            lastHandledDetectionCount = soundDetector.state.value.count
+        }
     }
 
     fun start() = engine.start()
@@ -128,23 +152,23 @@ class StopwatchViewModel @Inject constructor(
                     }
                 }
                 lastRejectionReason = detectorState.lastRejectionReason
+                if (detectorState.count < lastHandledDetectionCount) {
+                    lastHandledDetectionCount = detectorState.count
+                }
 
-                // Handle sound triggers
-                if (isVisible &&
-                    settings.soundDetectionEnabled && 
-                    settings.soundTriggerAction != SoundTriggerAction.NONE &&
-                    detectorState.isLit) {
-                    
-                    val lastEvent = detectorState.events.firstOrNull()
-                    val type = lastEvent?.type ?: "Unknown"
-
-                    if (settings.allowedSoundProfiles.contains(type)) {
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastDetectionTimestamp >= minDetectionIntervalMs) {
-                            lastDetectionTimestamp = currentTime
-                            sfxPlayer.play(SfxId.DetectionSuccess)
-                            handleSoundTrigger(settings.soundTriggerAction)
-                        }
+                // Handle all newly accepted detections, not just the latest one.
+                if (isVisible && settings.soundDetectionEnabled) {
+                    val newCount = (detectorState.count - lastHandledDetectionCount).coerceAtLeast(0)
+                    if (newCount > 0) {
+                        detectorState.events
+                            .take(newCount)
+                            .asReversed()
+                            .forEach { event ->
+                                if (isActionableFreeGestureEvent(event)) {
+                                    tapRecognizer.onTap(event.timestampMs)
+                                }
+                            }
+                        lastHandledDetectionCount = detectorState.count
                     }
                 }
             }
@@ -165,46 +189,131 @@ class StopwatchViewModel @Inject constructor(
         }
     }
 
-    private fun handleSoundTrigger(action: SoundTriggerAction) {
-        vibrationHelper.vibrateTick()
-        val currentState = state.value ?: return
+    private fun handleSoundTrigger(action: SoundTriggerAction): Boolean {
+        val currentState = state.value ?: return false
 
         when (action) {
             SoundTriggerAction.NONE -> {
                 // Do nothing
+                return false
             }
             SoundTriggerAction.START_RESUME -> {
+                if (currentState.isStopwatchRunning) {
+                    pause()
+                    vibrationHelper.vibrateTick()
+                    return true
+                }
                 when (currentState.phase) {
-                    Phase.READY -> start()
-                    Phase.PAUSED -> resume()
-                    Phase.RUNNING -> { /* Already running */ }
-                    Phase.COMPLETED -> { /* Do nothing */ }
+                    Phase.READY -> {
+                        start()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    Phase.PAUSED -> {
+                        resume()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    // Backward-compatibility: old START_RESUME configs should still
+                    // honor the newer double-tap toggle behavior while running.
+                    Phase.RUNNING -> {
+                        pause()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    Phase.COMPLETED -> return false
                 }
             }
             SoundTriggerAction.PAUSE -> {
-                if (currentState.phase == Phase.RUNNING) {
+                if (currentState.phase == Phase.RUNNING || currentState.isStopwatchRunning) {
                     pause()
+                    vibrationHelper.vibrateTick()
+                    return true
                 }
+                return false
             }
             SoundTriggerAction.NEXT_STEP -> {
                 next()
+                vibrationHelper.vibrateTick()
+                return true
             }
             SoundTriggerAction.TOGGLE_PLAY_PAUSE -> {
+                if (currentState.isStopwatchRunning) {
+                    pause()
+                    vibrationHelper.vibrateTick()
+                    return true
+                }
                 when (currentState.phase) {
-                    Phase.READY -> start()
-                    Phase.RUNNING -> pause()
-                    Phase.PAUSED -> resume()
-                    Phase.COMPLETED -> { /* Do nothing */ }
+                    Phase.READY -> {
+                        start()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    Phase.RUNNING -> {
+                        pause()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    Phase.PAUSED -> {
+                        resume()
+                        vibrationHelper.vibrateTick()
+                        return true
+                    }
+                    Phase.COMPLETED -> return false
                 }
             }
             SoundTriggerAction.PARSE -> {
                 // Future integration for Voice/Command parsing
+                return false
             }
+        }
+        return false
+    }
+
+    private fun handleTripleTap(): Boolean {
+        val currentState = state.value ?: return false
+        val canLap = currentState.isStopwatchRunning || currentState.phase == Phase.PAUSED
+        if (!canLap) return false
+        engine.lap()
+        vibrationHelper.vibrateTick()
+        return true
+    }
+
+    private fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {
+        if (!isFreeGestureProfile(event.type)) return false
+        val family = event.type.substringBefore(" (").trim()
+        return when (family) {
+            "Snap" -> {
+                if (event.type == "Snap (Low)") return false
+                if (event.confidence < 0.84f) return false
+                !(event.centroid < 3300f && event.tilt <= -0.22f)
+            }
+            "Clap", "Slap" -> {
+                if (event.confidence < 0.82f) return false
+                val obviousObjectContact =
+                    event.durationMs <= 55 &&
+                        event.centroid <= 2900f &&
+                        event.tilt <= -0.55f
+                val lowBandThudLike =
+                    event.centroid < 2400f &&
+                        event.tilt <= -0.80f
+                if (obviousObjectContact || lowBandThudLike) return false
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun isFreeGestureProfile(type: String): Boolean {
+        return when (type.substringBefore(" (").trim()) {
+            "Snap", "Clap", "Slap" -> true
+            else -> false
         }
     }
 
     override fun onCleared() {
         super.onCleared()
+        tapRecognizer.clear()
         soundDetector.stop(consumerId)
     }
 }

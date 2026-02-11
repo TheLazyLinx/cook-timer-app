@@ -12,6 +12,7 @@ package ro.maris.tools.cooktimer.audio
 data class DetectionDiagnostic(
     val id: Long,
     val timestamp: String,                // HH:mm:ss.SSS
+    val eventTimestampMs: Long = 0L,      // elapsedRealtime timestamp of detection event
     val outcome: String,                  // "ACCEPTED" or "REJECTED"
     val rejectedAt: String?,              // null = accepted. Stage name otherwise.
     val rejectionDetail: String?,         // Human-readable explanation
@@ -48,6 +49,12 @@ data class DetectionDiagnostic(
     val bestConfidence: Float = 0f,
     val allProfileScores: List<ProfileScore> = emptyList(),
 
+    // Gesture grouping diagnostics (set by UI gesture recognizer flow)
+    val gestureGroupId: Long? = null,
+    val gestureTapIndex: Int? = null,
+    val gestureTapCount: Int? = null,
+    val gestureUnpairedReason: String? = null,
+
     // User annotation
     val note: String = ""
 ) {
@@ -80,13 +87,17 @@ data class DetectionDiagnostic(
             "%.3f".format(bestConfidence),
             allProfileScores.joinToString(";") { "${it.name}=${it.confidence.let { c -> "%.2f".format(c) }}" },
             rejectionDetail ?: "",
+            gestureGroupId?.toString() ?: "",
+            gestureTapIndex?.toString() ?: "",
+            gestureTapCount?.toString() ?: "",
+            gestureUnpairedReason?.replace(",", ";")?.replace("\n", " ") ?: "",
             note.replace(",", ";").replace("\n", " ")
         ).joinToString(",")
     }
 
     companion object {
         fun csvHeader(): String {
-            return "timestamp,outcome,rejectedAt,noiseFloor,threshold,preEventNoise,triggerRms,attackRatio,durationMs,peakRms,peakRaw,sustainRatio,decayRatio,peakFrame,preEventCV,postEventRms,postQuietThreshold,avgZcr,avgCentroid,avgTilt,bestProfile,bestConfidence,profileScores,detail,note"
+            return "timestamp,outcome,rejectedAt,noiseFloor,threshold,preEventNoise,triggerRms,attackRatio,durationMs,peakRms,peakRaw,sustainRatio,decayRatio,peakFrame,preEventCV,postEventRms,postQuietThreshold,avgZcr,avgCentroid,avgTilt,bestProfile,bestConfidence,profileScores,detail,gestureGroup,gestureTapIndex,gestureTapCount,gesturePairingReason,note"
         }
     }
 }

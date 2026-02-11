@@ -44,9 +44,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +55,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.model.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,7 +67,7 @@ fun SettingsScreen(
 ) {
     val settings by vm.settings.collectAsState()
     val focusManager = LocalFocusManager.current
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    var selectedTabIndex by rememberSaveable { mutableStateOf(0) }
     val tabs = listOf("General", "Audio & Haptics")
 
     Scaffold(
@@ -260,7 +259,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            text = "Control the timer with claps or knocks",
+                            text = "Control runs using sound tap patterns",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -279,46 +278,25 @@ fun SettingsScreen(
 
                         if (settings.soundDetectionEnabled) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            
-                            Text(
-                                text = "Sound Trigger Action",
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            
-                            SoundTriggerActionDropdown(
-                                selectedAction = settings.soundTriggerAction,
-                                onActionSelected = { vm.setSoundTriggerAction(it) }
-                            )
-                            
-                            Text(
-                                text = when (settings.soundTriggerAction) {
-                                    SoundTriggerAction.NONE -> "Sound gestures will be ignored"
-                                    SoundTriggerAction.START_RESUME -> "Clap to start or resume the timer"
-                                    SoundTriggerAction.PAUSE -> "Clap to pause the timer"
-                                    SoundTriggerAction.NEXT_STEP -> "Clap to skip to the next step"
-                                    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Clap to play/pause the timer"
-                                    SoundTriggerAction.PARSE -> "Clap to trigger command parsing"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            Text(
-                                text = "Allowed Triggers",
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            
-                            Text(
-                                text = "Select which sounds can trigger the action",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
 
-                            SoundTriggerTypeDropdown(
-                                selectedType = vm.getSoundTriggerType(),
-                                onTypeSelected = { vm.setSoundTriggerType(it) }
+                            Text(
+                                text = "Free mode",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "Double tap: Start / Pause / Resume",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Triple tap function: Stopwatch = Lap, Preset Run = Parse",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Gesture triggers: Snap and Clap only (Knock is reserved for a later paid release).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -344,7 +322,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = "Sound gesture control uses your device's microphone to detect loud, sudden sounds like claps or knocks. This feature requires microphone permission and works best in quiet environments.",
+                            text = "Sound gesture control listens for short loud taps. Free mode uses fixed behavior: Double tap starts/pauses/resumes, Triple tap triggers function (Lap in Stopwatch, Parse in Preset Run). Microphone permission is required.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -395,113 +373,11 @@ private fun ThemeModeDropdown(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SoundTriggerTypeDropdown(
-    selectedType: SettingsViewModel.SoundTriggerType,
-    onTypeSelected: (SettingsViewModel.SoundTriggerType) -> Unit
-) {
-    var isExpanded by remember { mutableStateOf(false) }
-
-    ExposedDropdownMenuBox(
-        expanded = isExpanded,
-        onExpandedChange = { isExpanded = it }
-    ) {
-        OutlinedTextField(
-            value = when (selectedType) {
-                SettingsViewModel.SoundTriggerType.SNAP -> "Snaps"
-                SettingsViewModel.SoundTriggerType.SLAP -> "Slaps"
-                SettingsViewModel.SoundTriggerType.KNOCK -> "Knocks"
-                SettingsViewModel.SoundTriggerType.ALL -> "Any Sound"
-            },
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Trigger Type") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-        )
-        
-        ExposedDropdownMenu(
-            expanded = isExpanded,
-            onDismissRequest = { isExpanded = false }
-        ) {
-            SettingsViewModel.SoundTriggerType.entries.forEach { type ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            when (type) {
-                                SettingsViewModel.SoundTriggerType.SNAP -> "Snaps"
-                                SettingsViewModel.SoundTriggerType.SLAP -> "Slaps"
-                                SettingsViewModel.SoundTriggerType.KNOCK -> "Knocks"
-                                SettingsViewModel.SoundTriggerType.ALL -> "Any Sound"
-                            }
-                        )
-                    },
-                    onClick = {
-                        onTypeSelected(type)
-                        isExpanded = false
-                    }
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SoundTriggerActionDropdown(
-    selectedAction: SoundTriggerAction,
-    onActionSelected: (SoundTriggerAction) -> Unit
-) {
-    var isExpanded by remember { mutableStateOf(false) }
-
-    ExposedDropdownMenuBox(
-        expanded = isExpanded,
-        onExpandedChange = { isExpanded = it }
-    ) {
-        OutlinedTextField(
-            value = selectedAction.toDisplayString(),
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Action") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-        )
-        
-        ExposedDropdownMenu(
-            expanded = isExpanded,
-            onDismissRequest = { isExpanded = false }
-        ) {
-            SoundTriggerAction.entries.forEach { action ->
-                DropdownMenuItem(
-                    text = { Text(action.toDisplayString()) },
-                    onClick = {
-                        onActionSelected(action)
-                        isExpanded = false
-                    }
-                )
-            }
-        }
-    }
-}
 
 private fun ThemeMode.toDisplayString(): String = when (this) {
     ThemeMode.SYSTEM -> "System Default"
     ThemeMode.LIGHT -> "Light"
     ThemeMode.DARK -> "Dark"
-}
-
-private fun SoundTriggerAction.toDisplayString(): String = when (this) {
-    SoundTriggerAction.NONE -> "None"
-    SoundTriggerAction.START_RESUME -> "Start/Resume"
-    SoundTriggerAction.PAUSE -> "Pause"
-    SoundTriggerAction.NEXT_STEP -> "Next Step (Pass)"
-    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Start/Pause"
-    SoundTriggerAction.PARSE -> "Parse"
 }
 
 @Composable
@@ -537,7 +413,7 @@ private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit, onD
             )
             
             Text(
-                text = "Test if your device can detect claps or knocks",
+                text = "Test if your device can detect taps (double/triple)",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -576,7 +452,7 @@ private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit, onD
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Listening... Try clapping or knocking!",
+                            text = "Listening... try double taps and triple taps.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary
                         )

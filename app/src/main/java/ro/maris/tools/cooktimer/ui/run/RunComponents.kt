@@ -55,7 +55,7 @@ fun StarterHelpOverlay(
              HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
              
              HelpItem("🫰", "Snap", "Start or Resume timer")
-             HelpItem("🤚", "Slap", "Start or Next Step")
+             HelpItem("🤚", "Clap", "Start or Next Step")
              HelpItem("⚪", "Circles", "Watch the circles below the timer. They meet when a sound is detected.")
              HelpItem("⚠️", "Tip", "Keep background noise low for best results.")
 
