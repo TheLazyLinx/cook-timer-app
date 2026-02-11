@@ -26,6 +26,18 @@ class DataStoreSettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) : SettingsRepository {
 
+    private val freeAllowedProfiles = setOf(
+        "Snap (High)", "Snap (Mid)", "Snap (Low)",
+        "Clap (Airy)", "Clap", "Clap (Wet)"
+    )
+
+    private fun normalizeProfileName(name: String): String = when (name) {
+        "Slap (Airy)" -> "Clap (Airy)"
+        "Slap" -> "Clap"
+        "Slap (Wet)" -> "Clap (Wet)"
+        else -> name
+    }
+
     private object Keys {
         val SOUND_EFFECTS_ENABLED = booleanPreferencesKey("sound_effects_enabled")
         val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
@@ -46,8 +58,10 @@ class DataStoreSettingsRepository @Inject constructor(
                 soundTriggerAction = preferences[Keys.SOUND_TRIGGER_ACTION]
                     ?.let { runCatching { SoundTriggerAction.valueOf(it) }.getOrNull() }
                     ?: SoundTriggerAction.TOGGLE_PLAY_PAUSE,
-                allowedSoundProfiles = preferences[Keys.ALLOWED_SOUND_PROFILES]
-                    ?: setOf("Snap (High)", "Snap (Mid)", "Snap (Low)", "Slap", "Knock", "Stomp"),
+                allowedSoundProfiles = ((preferences[Keys.ALLOWED_SOUND_PROFILES]
+                    ?.map(::normalizeProfileName)?.toSet()
+                    ?: freeAllowedProfiles).intersect(freeAllowedProfiles))
+                    .ifEmpty { freeAllowedProfiles },
                 themeMode = preferences[Keys.THEME_MODE]
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
                     ?: ThemeMode.SYSTEM,

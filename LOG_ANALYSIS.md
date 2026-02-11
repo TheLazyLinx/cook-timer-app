@@ -1,52 +1,73 @@
-# Sound Analysis Logs
+# Sound Analysis and Diagnostics
 
-To help refine detection, the app now outputs a structured CSV-style log for every sound event that crosses the initial volume threshold.
+This project now has two useful outputs for tuning:
+- Logcat stream (`tag:SoundAnalysis`) for low-level detector events
+- In-app diagnostics CSV export for structured event review
 
-## How to Capture
-1. Connect your device to Android Studio.
-2. Open the **Logcat** tab.
-3. In the filter bar, type: `tag:SoundAnalysis`.
-4. Run the app and perform various sounds (Snaps, Claps, Background Noise, Speech).
-5. Copy the output lines into a spreadsheet (Excel, Google Sheets).
+Use diagnostics CSV as the primary source when analyzing missed double/triple taps.
 
-## Column Breakdown
+## How to Capture Diagnostics CSV
 
-The log output follows this format:
-`TIMESTAMP,CONTEXT,RESULT,CONFIDENCE,DURATION,RMS,PEAK,ZCR,CENTROID,TILT,ISOLATION|REASON`
+1. Open Settings -> Sound diagnostics.
+2. Run tests (snap, clap, noise, intended gestures).
+3. Export CSV from diagnostics.
+4. Review in spreadsheet.
 
-| Column | Name | Description | Target / Notes |
-| :--- | :--- | :--- | :--- |
-| **0** | **Timestamp** | `HH:mm:ss.SSS` | When the event occurred. |
-| **1** | **Context** | String | The preset name or screen context (e.g., "Egg Timer", "TESTING"). |
-| **2** | **Result** | `PENDING_[PROFILE]`, `DETECTED_[PROFILE]`, `REJECTED`, or `REJECTED_POST_[PROFILE]`. | `PENDING` means the profile matched and the event is awaiting post-quiet validation. |
-| **3** | **Confidence** | `0.00` - `1.00` | Score of the best matching profile. We usually want >= 0.78. |
-| **4** | **Duration** | Milliseconds (`ms`) | **Snaps:** Short (<50ms). **Speech:** Long (>100ms). |
-| **5** | **RMS** | Root Mean Square (0.0 - 1.0) | The "Volume" or energy of the event. |
-| **6** | **Peak** | Raw Amplitude (0.0 - 1.0) | The absolute loudest point. Useful for clipping detection. |
-| **7** | **ZCR** | Zero Crossing Rate | High frequency noise = High ZCR. **Snaps:** ~0.10-0.30. |
-| **8** | **Centroid** | Spectral Centroid (Hz) | "Center of Gravity" of the frequency. **Snaps:** High (>2500Hz). |
-| **9** | **Tilt** | Spectral Slope | Slope of frequency drop-off. **Snaps:** Positive/Flat. **Noise:** Negative. |
-| **10** | **Isolation** | Pre-Noise / Event-RMS Ratio | How "sudden" the sound was. Lower is better. < 0.5 is ideal. |
-| **11** | **Reason** | Text Description | Why the event was rejected (if applicable). Includes "Artifact" for wakes. |
+Current header:
 
-## Optimization Strategy
+`timestamp,outcome,rejectedAt,noiseFloor,threshold,preEventNoise,triggerRms,attackRatio,durationMs,peakRms,peakRaw,sustainRatio,decayRatio,peakFrame,preEventCV,postEventRms,postQuietThreshold,avgZcr,avgCentroid,avgTilt,bestProfile,bestConfidence,profileScores,detail,gestureGroup,gestureTapIndex,gestureTapCount,gesturePairingReason,note`
 
-### 1. "My snaps are being rejected"
-- Look at the **REJECTED** lines corresponding to your snaps.
-- Check the **Reason**.
-- **If Reason is "Isolation":** The environment is too loud relative to the snap.
-- **If Reason is "Low Confidence":** Check which metric is off.
-    - Is **Duration** too long? (Maybe > 50ms?)
-    - Is **Centroid** too low? (Maybe < 2000Hz?)
-- Adjust the `SoundProfile` values in `SoundDetector.kt` to encompass these logged values.
+## Key Columns
 
-### 2. "I see PENDING but not DETECTED"
-- Look for `REJECTED_POST_` lines after the pending entry.
-- If the **Reason** mentions `Post-Event Noisy`, the room stayed loud after the impact.
-- Reduce background noise or use a sharper, shorter gesture.
+- `outcome`: `ACCEPTED` or `REJECTED`
+- `rejectedAt`: stage name (`SUSTAIN`, `DECAY`, `ISOLATION`, `CHAOS_PRE`, `CHAOS_POST`, `METALLIC`, `ENVELOPE_RING`, `ENVELOPE_COMPLEX`, `SURFACE_TAP`, `HARD_SURFACE`, `STAGE2`, etc.)
+- `detail`: human-readable rejection reason
+- `bestProfile` / `bestConfidence`: top profile match
+- `profileScores`: all profile confidences
 
-### 3. "Clapping triggers it"
-- Look at the `DETECTED_SNAP` lines that were actually claps.
-- Compare them to real snaps.
-- Claps usually have **Longer Duration** or **Lower Centroid**.
-- Tighten the `weightDuration` or `weightCentroid` in the `SoundProfile` to penalize these differences more heavily.
+Gesture pairing fields:
+- `gestureGroup`: group id for taps evaluated together
+- `gestureTapIndex`: position in the group
+- `gestureTapCount`: final resolved size (1/2/3)
+- `gesturePairingReason`: why a chain stopped (for example no 3rd tap in grace window)
+
+## Detector vs Action
+
+`DETECTED_*` in logs means detector-level acceptance, not guaranteed control action.
+
+For Stopwatch/Timer/Run actions, taps must also:
+- pass action-quality filtering (`isActionableFreeGestureEvent`)
+- form a valid double/triple inside recognizer windows (`1200ms` tap window, `800ms` triple grace)
+
+If you see detector accepts but no behavior, check gesture fields first:
+- empty `gestureGroup` usually means the event was not routed into gesture grouping
+- `gestureTapCount=1` means it did not pair in time
+
+## How to Read Gesture Failures
+
+1. Start from `ACCEPTED` rows only.
+2. Group by `gestureGroup`.
+3. Check `gestureTapCount`:
+- `1`: no second tap inside window
+- `2`: no third tap inside triple grace window
+- `3`: successful triple
+4. For missing taps, inspect neighboring `REJECTED` rows by timestamp and `rejectedAt`.
+
+## Common Patterns
+
+- Many `SUSTAIN`/`DECAY` rejections near attempted triples:
+  - impact tail is too long for current envelope checks
+- `CHAOS_PRE` clusters:
+  - environment already noisy before impact
+- `CHAOS_POST` with ringing detail:
+  - post-impact ringing stayed too energetic
+- `METALLIC` / `ENVELOPE_RING`:
+  - likely non-gesture ringing impact (cutlery, key-like or ceramic ping)
+
+## Logcat Stream (Optional)
+
+Logcat with `tag:SoundAnalysis` is still useful for live debugging, but it is less convenient than diagnostics CSV for gesture-chain analysis.
+
+Use both when needed:
+- CSV for precise grouping and rejection stages
+- Logcat for fast live iteration while testing

@@ -20,7 +20,10 @@ CookTimer2 is a simple, reliable cooking timer that focuses on **processes**, no
   - Auto or manual start modes per step
   - Optional notes for each step
 - **Timer Engine**: State machine-based timer with start/pause/resume/next/back controls
-- **Sound Gesture Control**: Optional hands-free slap/knock detection for timer control. Now supports safe multi-screen usage.
+- **Sound Gesture Control**: Optional hands-free snap/clap detection for timer control. Supports safe multi-screen usage with fixed free-mode gesture behavior:
+  - Double tap: Start / Pause / Resume
+  - Triple tap: Stopwatch = Lap, Preset Run = Parse
+  - Action routing uses an additional quality filter before gesture grouping to reduce kitchen false positives
 - **Haptic Feedback**:
   - Vibration confirmation for state transitions (user actions, timer completion, step changes)
   - "Clock Tick" feedback for valid sound triggers
