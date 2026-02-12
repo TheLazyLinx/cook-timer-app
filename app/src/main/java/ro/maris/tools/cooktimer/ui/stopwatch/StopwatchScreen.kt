@@ -29,6 +29,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,6 +40,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,9 +73,12 @@ fun StopwatchScreen(
     val sfx = LocalSfxPlayer.current
     val detectorState by vm.detectorState.collectAsState()
     val settings by vm.settings.collectAsState(initial = null)
+    val historyState by vm.historyState.collectAsState()
     val useSegmentedDisplay = settings?.segmentedDisplayEnabled ?: true
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var showHelp by remember { mutableStateOf(false) }
+    var selectedTabIndex by rememberSaveable { mutableStateOf(0) }
+    val tabs = listOf("Stopwatch", "History")
 
     LaunchedEffect(settings) {
         if (settings?.hasShownSoundHelpOverlay == false) {
@@ -320,6 +326,181 @@ fun StopwatchScreen(
         }
     }
 
+    @Composable
+    fun ColumnScope.HistoryTab(modifier: Modifier = Modifier) {
+        val recent = historyState.recent
+        val saved = historyState.saved
+
+        if (recent == null && saved == null) {
+            Box(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No history yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            return
+        }
+
+        LazyColumn(
+            modifier = modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Text(
+                    text = "Most recent (auto-managed)",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    OutlinedButton(
+                        onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.saveRecentHistory() },
+                        enabled = recent != null
+                    ) {
+                        Text("Save")
+                    }
+                }
+                if (recent == null) {
+                    Text(
+                        text = "No recent session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = "Total: ${formatTime(recent.totalElapsedSec)}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Laps: ${recent.laps.size}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (recent.laps.isEmpty()) {
+                        Text(
+                            text = "No laps recorded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        recent.laps.reversed().forEach { lap ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Lap ${lap.index}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = formatTime(lap.lapTimeSec),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = "Total: ${formatTime(lap.splitTimeSec)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                HorizontalDivider()
+                Text(
+                    text = "Saved",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    OutlinedButton(
+                        onClick = sfxClick(sfx, SfxId.RunNavRow) { vm.clearSavedHistory() },
+                        enabled = saved != null
+                    ) {
+                        Text("Clear")
+                    }
+                }
+                if (saved == null) {
+                    Text(
+                        text = "No saved session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = "Total: ${formatTime(saved.totalElapsedSec)}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Laps: ${saved.laps.size}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (saved.laps.isEmpty()) {
+                        Text(
+                            text = "No laps recorded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        saved.laps.reversed().forEach { lap ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Lap ${lap.index}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = formatTime(lap.lapTimeSec),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = "Total: ${formatTime(lap.splitTimeSec)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -328,124 +509,137 @@ fun StopwatchScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(text = state.presetName, style = MaterialTheme.typography.titleMedium)
+            TabRow(selectedTabIndex = selectedTabIndex) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTabIndex == index,
+                        onClick = { selectedTabIndex = index },
+                        text = { Text(title) }
+                    )
+                }
+            }
 
-            if (isLandscape) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
+            if (selectedTabIndex == 0) {
+                if (isLandscape) {
+                    Row(
                         modifier = Modifier
-                            .weight(1.05f)
-                            .fillMaxHeight(),
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1.05f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            ClockArea()
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(0.8f)
+                                .fillMaxHeight()
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = when (state.phase) {
+                                        Phase.READY -> "READY"
+                                        Phase.RUNNING -> "RUNNING"
+                                        Phase.PAUSED -> "PAUSED"
+                                        Phase.COMPLETED -> "COMPLETED"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                if (!notesText.isNullOrBlank()) {
+                                    Text(
+                                        text = notesText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.widthIn(max = 320.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.Bottom
+                        ) {
+                            if (state.laps.isNotEmpty()) {
+                                val latestLap = state.laps.last()
+                                Text(
+                                    text = "Latest lap: ${formatTime(latestLap.lapTimeSec)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            RetroArcSoundIndicator(
+                                state = detectorState,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                isPaused = state.phase == Phase.PAUSED
+                            )
+                            Controls()
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         ClockArea()
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .weight(0.8f)
-                            .fillMaxHeight()
-                            .padding(horizontal = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Text(
+                        text = when (state.phase) {
+                            Phase.READY -> "READY"
+                            Phase.RUNNING -> "RUNNING"
+                            Phase.PAUSED -> "PAUSED"
+                            Phase.COMPLETED -> "COMPLETED"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+
+                    if (!notesText.isNullOrBlank()) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = when (state.phase) {
-                                    Phase.READY -> "READY"
-                                    Phase.RUNNING -> "RUNNING"
-                                    Phase.PAUSED -> "PAUSED"
-                                    Phase.COMPLETED -> "COMPLETED"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                text = notesText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.widthIn(max = 360.dp)
                             )
-                            if (!notesText.isNullOrBlank()) {
-                                Text(
-                                    text = notesText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.widthIn(max = 320.dp)
-                                )
-                            }
                         }
                     }
 
-                    Column(
+                    RetroArcSoundIndicator(
+                        state = detectorState,
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        verticalArrangement = Arrangement.Bottom
-                    ) {
-                        if (state.laps.isNotEmpty()) {
-                            val latestLap = state.laps.last()
-                            Text(
-                                text = "Latest lap: ${formatTime(latestLap.lapTimeSec)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        RetroArcSoundIndicator(
-                            state = detectorState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            isPaused = state.phase == Phase.PAUSED
-                        )
-                        Controls()
-                    }
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        isPaused = state.phase == Phase.PAUSED
+                    )
+
+                    LapList()
+                    Controls()
                 }
             } else {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    ClockArea()
-                }
-
-                Text(
-                    text = when (state.phase) {
-                        Phase.READY -> "READY"
-                        Phase.RUNNING -> "RUNNING"
-                        Phase.PAUSED -> "PAUSED"
-                        Phase.COMPLETED -> "COMPLETED"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                )
-
-                if (!notesText.isNullOrBlank()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = notesText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.widthIn(max = 360.dp)
-                        )
-                    }
-                }
-
-                RetroArcSoundIndicator(
-                    state = detectorState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    isPaused = state.phase == Phase.PAUSED
-                )
-
-                LapList()
-                Controls()
+                HistoryTab()
             }
         }
 
-        if (showHelp) {
+        if (showHelp && selectedTabIndex == 0) {
             StarterHelpOverlay(
                 onDismiss = {
                     showHelp = false
