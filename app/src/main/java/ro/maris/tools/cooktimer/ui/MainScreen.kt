@@ -1,19 +1,21 @@
 package ro.maris.tools.cooktimer.ui
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.outlined.Timer
 import ro.maris.tools.cooktimer.ui.navigation.AppNavHost
 import ro.maris.tools.cooktimer.ui.navigation.Routes
 
@@ -40,7 +42,13 @@ fun MainScreen() {
                 NavigationBar {
                     items.forEach { screen ->
                         NavigationBarItem(
-                            icon = { Icon(screen.icon, contentDescription = screen.label) },
+                            icon = {
+                                Icon(
+                                    imageVector = screen.icon,
+                                    contentDescription = screen.label,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            },
                             label = { Text(screen.label) },
                             selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
                             onClick = {
@@ -66,8 +74,8 @@ fun MainScreen() {
 }
 
 sealed class Screen(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    object Presets : Screen(Routes.PRESETS, "Presets", Icons.Filled.Home)
-    object Timer : Screen(Routes.TIMER, "Timer", Icons.Filled.PlayArrow)
-    object Stopwatch : Screen(Routes.STOPWATCH, "Stopwatch", Icons.Filled.Info)
+    object Presets : Screen(Routes.PRESETS, "Presets", Icons.AutoMirrored.Filled.List)
+    object Timer : Screen(Routes.TIMER, "Timer", Icons.Filled.HourglassBottom)
+    object Stopwatch : Screen(Routes.STOPWATCH, "Stopwatch", Icons.Outlined.Timer)
     object Settings : Screen(Routes.SETTINGS, "Settings", Icons.Filled.Settings)
 }

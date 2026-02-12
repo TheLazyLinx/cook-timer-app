@@ -15,6 +15,7 @@ import ro.maris.tools.cooktimer.audio.SfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
+import ro.maris.tools.cooktimer.domain.model.Lap
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
 import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
@@ -27,17 +28,35 @@ import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
 import ro.maris.tools.cooktimer.ui.sound.SoundTapGestureRecognizer
 import javax.inject.Inject
 import java.util.UUID
+import kotlin.math.max
 
 @HiltViewModel
 class StopwatchViewModel @Inject constructor(
-    timeProvider: TimeProvider,
+    private val timeProvider: TimeProvider,
     private val presetRepository: PresetRepository,
     private val settingsRepository: SettingsRepository,
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
-    savedStateHandle: SavedStateHandle
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    enum class HistorySlot {
+        RECENT,
+        SAVED
+    }
+
+    data class SessionHistory(
+        val totalElapsedSec: Int,
+        val laps: List<Lap>
+    )
+
+    data class HistoryState(
+        val histories: Map<HistorySlot, SessionHistory?>
+    ) {
+        val recent: SessionHistory? get() = histories[HistorySlot.RECENT]
+        val saved: SessionHistory? get() = histories[HistorySlot.SAVED]
+    }
 
     private var lastRejectionReason: String? = null
     private var lastHandledDetectionCount = 0
@@ -51,6 +70,8 @@ class StopwatchViewModel @Inject constructor(
     val detectorState = soundDetector.state
     val settings = settingsRepository.observeSettings()
     private val _isScreenVisible = MutableStateFlow(false)
+    private val _historyState = MutableStateFlow(loadPersistedHistoryState())
+    val historyState: StateFlow<HistoryState> = _historyState
 
     private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
         tapCount.tapTimestamps.forEachIndexed { index, timestampMs ->
@@ -85,7 +106,25 @@ class StopwatchViewModel @Inject constructor(
     fun resume() = engine.resume()
     fun next() = engine.next()
     fun back() = engine.back()
-    fun reset() = engine.reset()
+
+    fun reset() {
+        val snapshot = buildCurrentSessionHistorySnapshot()
+        if (snapshot != null) {
+            setHistory(HistorySlot.RECENT, snapshot)
+        } else {
+            clearHistory(HistorySlot.RECENT)
+        }
+        engine.reset()
+    }
+
+    fun saveRecentHistory() {
+        val recent = _historyState.value.recent ?: return
+        setHistory(HistorySlot.SAVED, recent)
+    }
+
+    fun clearSavedHistory() {
+        clearHistory(HistorySlot.SAVED)
+    }
 
     fun lap() {
         vibrationHelper.vibrateVirtualKey()
@@ -315,5 +354,93 @@ class StopwatchViewModel @Inject constructor(
         super.onCleared()
         tapRecognizer.clear()
         soundDetector.stop(consumerId)
+    }
+
+    private fun buildCurrentSessionHistorySnapshot(): SessionHistory? {
+        val currentState = state.value ?: return null
+        val step = currentState.activeStep ?: return null
+        if (step.durationSec != null) return null
+
+        val totalElapsedSec = computeCurrentElapsedSeconds(currentState)
+        if (totalElapsedSec <= 0 && currentState.laps.isEmpty()) return null
+
+        return SessionHistory(
+            totalElapsedSec = totalElapsedSec,
+            laps = currentState.laps
+        )
+    }
+
+    private fun computeCurrentElapsedSeconds(state: RunState): Int {
+        val startedAt = state.stopwatchStartedAtEpochSec
+        val runningElapsed = if (startedAt != null) {
+            (timeProvider.nowEpochSec() - startedAt).toInt().coerceAtLeast(0)
+        } else {
+            0
+        }
+        val computed = state.stopwatchAccumulatedSec + runningElapsed
+        val stateElapsed = state.stopwatchElapsedSec ?: 0
+        return max(computed, stateElapsed)
+    }
+
+    private fun loadPersistedHistoryState(): HistoryState {
+        val persisted = HistorySlot.values().associateWith { slot ->
+            loadPersistedHistory(slot)
+        }
+        return HistoryState(histories = persisted)
+    }
+
+    private fun loadPersistedHistory(slot: HistorySlot): SessionHistory? {
+        val totalElapsedSec = savedStateHandle.get<Int>(historyTotalKey(slot)) ?: return null
+        val rawLaps = savedStateHandle.get<String>(historyLapsKey(slot)).orEmpty()
+        return SessionHistory(
+            totalElapsedSec = totalElapsedSec,
+            laps = decodeLaps(rawLaps)
+        )
+    }
+
+    private fun setHistory(slot: HistorySlot, history: SessionHistory) {
+        val updated = _historyState.value.histories.toMutableMap()
+        updated[slot] = history
+        _historyState.value = HistoryState(updated)
+        savedStateHandle[historyTotalKey(slot)] = history.totalElapsedSec
+        savedStateHandle[historyLapsKey(slot)] = encodeLaps(history.laps)
+    }
+
+    private fun clearHistory(slot: HistorySlot) {
+        val updated = _historyState.value.histories.toMutableMap()
+        updated[slot] = null
+        _historyState.value = HistoryState(updated)
+        savedStateHandle.remove<Int>(historyTotalKey(slot))
+        savedStateHandle.remove<String>(historyLapsKey(slot))
+    }
+
+    private fun historyTotalKey(slot: HistorySlot): String {
+        return "stopwatch.history.${slot.name.lowercase()}.totalElapsedSec"
+    }
+
+    private fun historyLapsKey(slot: HistorySlot): String {
+        return "stopwatch.history.${slot.name.lowercase()}.laps"
+    }
+
+    private fun encodeLaps(laps: List<Lap>): String {
+        return laps.joinToString(separator = ";") { lap ->
+            "${lap.index},${lap.splitTimeSec},${lap.lapTimeSec}"
+        }
+    }
+
+    private fun decodeLaps(raw: String): List<Lap> {
+        if (raw.isBlank()) return emptyList()
+        return raw.split(";").mapNotNull { token ->
+            val parts = token.split(",")
+            if (parts.size != 3) return@mapNotNull null
+            val index = parts[0].toIntOrNull() ?: return@mapNotNull null
+            val splitTimeSec = parts[1].toIntOrNull() ?: return@mapNotNull null
+            val lapTimeSec = parts[2].toIntOrNull() ?: return@mapNotNull null
+            Lap(
+                index = index,
+                splitTimeSec = splitTimeSec,
+                lapTimeSec = lapTimeSec
+            )
+        }
     }
 }
