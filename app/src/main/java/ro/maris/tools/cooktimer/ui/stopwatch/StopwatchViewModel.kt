@@ -74,14 +74,17 @@ class StopwatchViewModel @Inject constructor(
     val historyState: StateFlow<HistoryState> = _historyState
 
     private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
-        tapCount.tapTimestamps.forEachIndexed { index, timestampMs ->
+        tapCount.taps.forEachIndexed { index, event ->
             soundDetector.annotateGestureForEvent(
-                eventTimestampMs = timestampMs,
+                eventTimestampMs = event.timestampMs,
                 groupId = tapCount.groupId,
                 tapIndex = index + 1,
                 tapCount = tapCount.tapCount,
                 unpairedReason = tapCount.unpairedReason
             )
+        }
+        if (tapCount.tapCount >= 2) {
+            soundDetector.onGestureResolvedForCalibration(tapCount.taps, tapCount.tapCount)
         }
         val handled = when {
             tapCount.tapCount >= 3 -> handleTripleTap()
@@ -204,7 +207,7 @@ class StopwatchViewModel @Inject constructor(
                             .asReversed()
                             .forEach { event ->
                                 if (isActionableFreeGestureEvent(event)) {
-                                    tapRecognizer.onTap(event.timestampMs)
+                                    tapRecognizer.onTap(event)
                                 }
                             }
                         lastHandledDetectionCount = detectorState.count

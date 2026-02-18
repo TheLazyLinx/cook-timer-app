@@ -89,10 +89,19 @@ private val stageColors = mapOf(
     "DURATION" to StageInfo("DURATION", Color(0xFFFFC107)),
     "DECAY" to StageInfo("DECAY", Color(0xFFCDDC39)),
     "LOW_CONFIDENCE" to StageInfo("LOW_CONF", Color(0xFF9C27B0)),
+    "LOW_FLATNESS" to StageInfo("LOW_FLAT", Color(0xFF8E24AA)),
+    "SESSION_MISMATCH" to StageInfo("SESS_MIS", Color(0xFF6A1B9A)),
+    "NUISANCE_SIMILARITY" to StageInfo("NUIS_SIM", Color(0xFF4E342E)),
+    "CADENCE_PATTERN" to StageInfo("CADENCE", Color(0xFF00796B)),
+    "ATTACK_SHAPE" to StageInfo("ATK_SHAPE", Color(0xFF5E35B1)),
+    "ULTRA_BRIGHT_PING" to StageInfo("UB_PING", Color(0xFF3949AB)),
+    "RESONANT_IMPACT" to StageInfo("RESONANT", Color(0xFF6D4C41)),
+    "BRIGHT_IMPACT" to StageInfo("BRIGHT", Color(0xFF5D4037)),
     "ARTIFACT" to StageInfo("ARTIFACT", Color(0xFF607D8B)),
     "ISOLATION" to StageInfo("ISOLATN", Color(0xFF2196F3)),
     "CHAOS_PRE" to StageInfo("CHAOS_PRE", Color(0xFF00BCD4)),
-    "CHAOS_POST" to StageInfo("CHAOS_PST", Color(0xFF009688))
+    "CHAOS_POST" to StageInfo("CHAOS_PST", Color(0xFF009688)),
+    "PLAYBACK_BLANK" to StageInfo("BLANK", Color(0xFF455A64))
 )
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -354,6 +363,13 @@ private fun DetectionRow(event: SoundDetectionEvent) {
                 Text("C: ${"%.0f".format(event.centroid)}Hz", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
                 Text("T: ${"%.1f".format(event.tilt)}", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
             }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Z: ${"%.3f".format(event.zcr)}", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+                Text("F: ${"%.3f".format(event.flatness)}", style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace))
+            }
         }
     }
 }
@@ -603,6 +619,11 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
                     modifier = Modifier.width(52.dp)
                 )
                 Text(
+                    "F:${"%.2f".format(diag.avgFlatness)}",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.width(44.dp)
+                )
+                Text(
                     "${"%.0f".format(diag.bestConfidence * 100)}%",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
@@ -729,6 +750,8 @@ private fun DiagnosticCard(diag: DetectionDiagnostic, onNoteUpdate: (String) -> 
                     MetricRow("Avg ZCR", "%.3f".format(diag.avgZcr))
                     MetricRow("Avg Centroid", "%.0f Hz".format(diag.avgCentroid))
                     MetricRow("Avg Tilt", "%.2f".format(diag.avgTilt))
+                    MetricRow("Avg Flatness", "%.3f".format(diag.avgFlatness))
+                    diag.sessionSimilarity?.let { MetricRow("Session Similarity", "%.3f".format(it)) }
 
                     if (gestureKind != null) {
                         SectionHeader("Gesture Pairing")

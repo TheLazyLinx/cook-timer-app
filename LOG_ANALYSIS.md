@@ -15,15 +15,17 @@ Use diagnostics CSV as the primary source when analyzing missed double/triple ta
 
 Current header:
 
-`timestamp,outcome,rejectedAt,noiseFloor,threshold,preEventNoise,triggerRms,attackRatio,durationMs,peakRms,peakRaw,sustainRatio,decayRatio,peakFrame,preEventCV,postEventRms,postQuietThreshold,avgZcr,avgCentroid,avgTilt,bestProfile,bestConfidence,profileScores,detail,gestureGroup,gestureTapIndex,gestureTapCount,gesturePairingReason,note`
+`timestamp,outcome,rejectedAt,noiseFloor,threshold,preEventNoise,triggerRms,attackRatio,durationMs,peakRms,peakRaw,sustainRatio,decayRatio,peakFrame,preEventCV,postEventRms,postQuietThreshold,avgZcr,avgCentroid,avgTilt,avgFlatness,sessionSimilarity,bestProfile,bestConfidence,profileScores,detail,gestureGroup,gestureTapIndex,gestureTapCount,gesturePairingReason,note`
 
 ## Key Columns
 
 - `outcome`: `ACCEPTED` or `REJECTED`
-- `rejectedAt`: stage name (`SUSTAIN`, `DECAY`, `ISOLATION`, `CHAOS_PRE`, `CHAOS_POST`, `METALLIC`, `ENVELOPE_RING`, `ENVELOPE_COMPLEX`, `SURFACE_TAP`, `HARD_SURFACE`, `STAGE2`, etc.)
+- `rejectedAt`: stage name (`SUSTAIN`, `DECAY`, `ISOLATION`, `CHAOS_PRE`, `CHAOS_POST`, `METALLIC`, `RESONANT_IMPACT`, `ULTRA_BRIGHT_PING`, `CADENCE_PATTERN`, `ATTACK_SHAPE`, `NUISANCE_SIMILARITY`, `ENVELOPE_RING`, `ENVELOPE_COMPLEX`, `SURFACE_TAP`, `HARD_SURFACE`, `STAGE2`, etc.)
 - `detail`: human-readable rejection reason
 - `bestProfile` / `bestConfidence`: top profile match
 - `profileScores`: all profile confidences
+- `avgFlatness`: broadband/noise-like spectral indicator
+- `sessionSimilarity`: similarity to session-calibrated family reference (when available)
 
 Gesture pairing fields:
 - `gestureGroup`: group id for taps evaluated together
@@ -52,6 +54,8 @@ If you see detector accepts but no behavior, check gesture fields first:
 - `2`: no third tap inside triple grace window
 - `3`: successful triple
 4. For missing taps, inspect neighboring `REJECTED` rows by timestamp and `rejectedAt`.
+5. If taps are present but do not form a double/triple, check `gesturePairingReason` for:
+   - `Resonant impact-like sequence, treated as singles`
 
 ## Common Patterns
 
@@ -63,6 +67,18 @@ If you see detector accepts but no behavior, check gesture fields first:
   - post-impact ringing stayed too energetic
 - `METALLIC` / `ENVELOPE_RING`:
   - likely non-gesture ringing impact (cutlery, key-like or ceramic ping)
+- `RESONANT_IMPACT`:
+  - consistent resonant object-contact signatures (for example knife on glass) that profile-match as snap/clap
+- `ULTRA_BRIGHT_PING`:
+  - short, high-centroid/high-ZCR pings typical of crisp metal/glass contacts
+- `CADENCE_PATTERN`:
+  - periodic stream suppression for rhythmic non-gesture impacts
+  - detail includes cadence stats (`n`, mean interval, interval CV)
+- `NUISANCE_SIMILARITY`:
+  - event is very close to previously rejected nuisance signatures from the same session
+  - detail includes reference counts as `refs=total/strong`
+- `LOW_FLATNESS` / `SESSION_MISMATCH`:
+  - often tonal speech/object sounds or impacts dissimilar to current calibrated gesture family
 
 ## Logcat Stream (Optional)
 

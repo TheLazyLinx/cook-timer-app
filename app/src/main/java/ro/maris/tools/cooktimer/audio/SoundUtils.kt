@@ -3,13 +3,15 @@ package ro.maris.tools.cooktimer.audio
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 data class SpectralFeatures(
     val centroid: Float,
-    val tilt: Float // Slope of the log-power spectrum
+    val tilt: Float, // Slope of the log-power spectrum
+    val flatness: Float // Geometric mean / arithmetic mean of spectral magnitudes
 )
 
 object SoundUtils {
@@ -41,6 +43,12 @@ object SoundUtils {
         var sumXX = 0.0
         var count = 0
 
+        // Variables for spectral flatness.
+        var flatnessLogSum = 0.0
+        var flatnessLinSum = 0.0
+        var flatnessCount = 0
+        val flatnessEpsilon = 1e-12
+
         // Use up to Nyquist frequency
         // Start from bin 1 to avoid log(0) at DC
         for (i in 0 until n / 2) {
@@ -62,6 +70,14 @@ object SoundUtils {
                 sumXX += logF * logF
                 count++
             }
+
+            // Flatness accumulation (exclude DC bin).
+            if (i > 0) {
+                val safeMag = mag.toDouble() + flatnessEpsilon
+                flatnessLogSum += ln(safeMag)
+                flatnessLinSum += safeMag
+                flatnessCount++
+            }
         }
 
         val centroid = if (sumMag > 0.001) (sumWeightedMag / sumMag).toFloat() else 0f
@@ -74,9 +90,18 @@ object SoundUtils {
              }
         }
 
+        val flatness = if (flatnessCount > 0 && flatnessLinSum > 0.0) {
+            val geometricMean = exp(flatnessLogSum / flatnessCount)
+            val arithmeticMean = flatnessLinSum / flatnessCount
+            (geometricMean / arithmeticMean).toFloat().coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+
         return SpectralFeatures(
             centroid = centroid.coerceIn(0f, sampleRate / 2f),
-            tilt = tilt
+            tilt = tilt,
+            flatness = flatness
         )
     }
 

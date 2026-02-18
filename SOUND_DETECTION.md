@@ -23,6 +23,8 @@ Gesture grouping is done by `SoundTapGestureRecognizer`:
 - tap window: `1200ms`
 - duplicate suppression: `<90ms`
 - triple grace after double: `800ms`
+- inter-tap consistency gate (centroid/tilt/flatness/duration deltas)
+- resonant-sequence guard in recognizer: impact-like tap chains are downgraded to singles
 
 Important:
 - `DIAGNOSTIC` output shows detector-level acceptance/rejection.
@@ -37,7 +39,8 @@ A candidate event starts when loudness and attack constraints are met, using hig
 Core ideas:
 - dynamic threshold from noise floor
 - attack ratio gate
-- event monitored frame-by-frame (10ms windows)
+- event monitored with a `10ms` FFT window and `5ms` hop (50% overlap)
+- app playback blanking (`200ms`) to suppress self-triggering after SFX output
 
 ### 2. Temporal Shape Checks
 
@@ -63,19 +66,43 @@ The event is scored against profile families:
 
 A snap bias is applied when snap and clap scores are close for short bright impulses.
 
+Additional spectral feature:
+- `flatness` (geometric/arithmetic magnitude ratio) is tracked per event and used in stage-2 agreement plus low-flatness rejection.
+
 ### 4. False Positive Rejection Layers
 
 After profile match, additional gates reject likely impostors:
+- `SESSION_MISMATCH`: event deviates from per-session calibrated family reference
+- `NUISANCE_SIMILARITY`: event matches previously rejected nuisance signatures learned in-session
+- `LOW_FLATNESS`: event is too tonal for snap/clap family
 - `ENVELOPE_COMPLEX`: complex tail/rise envelope inconsistent with intended transient shape
 - `SURFACE_TAP`: table/body-coupled low-frequency impact signature
 - `HARD_SURFACE`: hard contact signature (object collisions) with constrained attack/tail
 - `ISOLATION`: too much pre-event noise relative to event strength
 - `CHAOS_PRE`: too many pre-event spikes in the lookback window
 - `METALLIC`: bright, positively tilted metallic-like transients
+- `RESONANT_IMPACT`: resonant object-contact cluster (knife/glass, cutlery/ceramic)
+- `ULTRA_BRIGHT_PING`: short, very bright high-centroid ping signature (edge/face contacts)
+- `CADENCE_PATTERN`: rhythmic repeated impulses (periodic appliance/utensil-like cadence)
+- `ATTACK_SHAPE`: long bright/low-flatness impact shape (flat-side material contacts)
 - `ENVELOPE_RING`: ringing envelope shape (bouncy/flat tail)
 - `STAGE2`: independent agreement score below threshold
 
 Chaos handling includes signature-aware whitelisting for valid follow-up taps so double/triple gestures are not blocked by the first tap tail.
+
+Per-session calibration:
+- first resolved multi-tap (`double`/`triple`) seeds a family reference (`Snap` or `Clap`)
+- subsequent same-family events are similarity-gated against that reference
+- repeated rejected impact signatures (metal/glass/wood/ceramic object contacts) are also memorized and similarity-gated
+- calibration is fixed for the active detector session and resets on stop/start
+- nuisance-memory gating requires multiple references before activation
+- diagnostics now include nuisance-memory behavior so repeated nuisance shapes are visible during tuning runs
+- periodic cadence suppression blocks first-tap-like events during a short hold (`1200ms`) once a regular 4+ tap pattern is detected
+
+Confidence hysteresis:
+- first tap threshold: `0.82`
+- follow-up tap threshold: `0.74`
+- diagnostic context currently uses `0.80`
 
 ### 5. Post-Event Validation
 
@@ -90,6 +117,7 @@ This catches brief ringing bursts that would otherwise pass if only the final sa
 Diagnostics contain stage-level details for every accepted/rejected event, including:
 - profile confidence and per-profile scores
 - pre/post event metrics
+- flatness and session-similarity metrics
 - gesture grouping annotation
 
 Gesture fields:
