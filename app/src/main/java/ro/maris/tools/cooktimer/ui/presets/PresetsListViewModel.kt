@@ -7,16 +7,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.domain.model.Preset
 import ro.maris.tools.cooktimer.domain.model.Step
+import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import java.util.UUID
 import javax.inject.Inject
 
 @HiltViewModel
 class PresetsListViewModel @Inject constructor(
-    private val repository: PresetRepository
+    private val repository: PresetRepository,
+    private val billingRepository: BillingRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PresetsUiState())
@@ -27,16 +30,21 @@ class PresetsListViewModel @Inject constructor(
             repository.seedBuiltInsIfEmpty()
         }
         viewModelScope.launch {
-            repository.observePresets().collect { presets ->
+            combine(
+                repository.observePresets(),
+                billingRepository.entitlement
+            ) { presets, entitlement ->
                 val builtIns = presets.filter { it.isBuiltIn }.sortedBy { it.name }
                 val custom = presets.filterNot { it.isBuiltIn }.sortedBy { it.name }
-                _state.value = PresetsUiState(
+                val isPremium = entitlement.isPremium
+                PresetsUiState(
                     builtIns = builtIns,
                     customPresets = custom,
-                    isCustomLimitReached = custom.isNotEmpty(),
-                    showUpgradeHint = _state.value.showUpgradeHint
+                    isCustomLimitReached = !isPremium && custom.isNotEmpty(),
+                    showUpgradeHint = !isPremium && _state.value.showUpgradeHint,
+                    isPremium = isPremium
                 )
-            }
+            }.collect { _state.value = it }
         }
     }
 
@@ -46,6 +54,11 @@ class PresetsListViewModel @Inject constructor(
             return
         }
         onNavigate()
+    }
+
+    fun startPremiumPurchase(activity: android.app.Activity?) {
+        if (activity == null) return
+        billingRepository.launchPurchaseFlow(activity)
     }
 
     fun dismissUpgradeHint() {
@@ -91,5 +104,6 @@ data class PresetsUiState(
     val builtIns: List<Preset> = emptyList(),
     val customPresets: List<Preset> = emptyList(),
     val isCustomLimitReached: Boolean = false,
-    val showUpgradeHint: Boolean = false
+    val showUpgradeHint: Boolean = false,
+    val isPremium: Boolean = false
 )

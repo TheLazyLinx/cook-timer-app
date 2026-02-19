@@ -5,17 +5,20 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.model.AppSettings
 import ro.maris.tools.cooktimer.domain.model.ThemeMode
+import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
+    private val billingRepository: BillingRepository,
     private val soundDetector: SoundDetector
 ) : ViewModel() {
 
@@ -27,6 +30,14 @@ class SettingsViewModel @Inject constructor(
         )
 
     val detectorState = soundDetector.state
+
+    val isPremium: StateFlow<Boolean> = billingRepository.entitlement
+        .map { it.isPremium }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = false
+        )
 
     fun setSoundEffectsEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -46,6 +57,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setDoubleTapAction(action: ro.maris.tools.cooktimer.domain.model.SoundTriggerAction) {
+        viewModelScope.launch {
+            settingsRepository.setDoubleTapAction(action)
+        }
+    }
+
+    fun setTripleTapAction(action: ro.maris.tools.cooktimer.domain.model.SoundTriggerAction) {
+        viewModelScope.launch {
+            settingsRepository.setTripleTapAction(action)
+        }
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch {
             settingsRepository.setThemeMode(mode)
@@ -56,6 +79,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.setSegmentedDisplayEnabled(enabled)
         }
+    }
+
+    fun startPremiumPurchase(activity: android.app.Activity?) {
+        if (activity == null) return
+        billingRepository.launchPurchaseFlow(activity)
     }
 
     fun startDetection(): Boolean {

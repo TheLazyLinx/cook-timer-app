@@ -3,6 +3,7 @@ package ro.maris.tools.cooktimer.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.widget.Toast
+import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -55,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.model.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,7 +68,9 @@ fun SettingsScreen(
     onDiagnostics: () -> Unit = {}
 ) {
     val settings by vm.settings.collectAsState()
+    val isPremium by vm.isPremium.collectAsState()
     val focusManager = LocalFocusManager.current
+    val activity = LocalContext.current as? Activity
     var selectedTabIndex by rememberSaveable { mutableStateOf(0) }
     val tabs = listOf("General", "Audio & Haptics")
 
@@ -174,6 +178,39 @@ fun SettingsScreen(
                                     vm.setSegmentedDisplayEnabled(!checked)
                                 }
                             )
+                        }
+                    }
+                }
+
+                // Premium Section
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Premium",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = if (isPremium) {
+                                "Premium is active. Thanks for supporting the app."
+                            } else {
+                                "Unlock unlimited presets, rich stopwatch history, and gesture mapping."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = { vm.startPremiumPurchase(activity) },
+                            enabled = !isPremium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (isPremium) "Premium Active" else "Go Premium")
                         }
                     }
                 }
@@ -301,6 +338,57 @@ fun SettingsScreen(
                         }
                     }
                 }
+
+                // Gesture Mapping Section
+                if (settings.soundDetectionEnabled) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Gesture Mapping",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = if (isPremium) {
+                                    "Customize double and triple tap actions."
+                                } else {
+                                    "Premium feature. Double tap = Start/Pause/Resume. Triple tap = Lap/Parse."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            GestureActionDropdown(
+                                label = "Double tap",
+                                selected = settings.doubleTapAction,
+                                enabled = isPremium,
+                                onActionSelected = { vm.setDoubleTapAction(it) }
+                            )
+
+                            GestureActionDropdown(
+                                label = "Triple tap",
+                                selected = settings.tripleTapAction,
+                                enabled = isPremium,
+                                onActionSelected = { vm.setTripleTapAction(it) }
+                            )
+
+                            if (!isPremium) {
+                                Button(
+                                    onClick = { vm.startPremiumPurchase(activity) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Go Premium")
+                                }
+                            }
+                        }
+                    }
+                }
                 
                 // Sound Test Section
                 if (settings.soundDetectionEnabled) {
@@ -378,6 +466,68 @@ private fun ThemeMode.toDisplayString(): String = when (this) {
     ThemeMode.SYSTEM -> "System Default"
     ThemeMode.LIGHT -> "Light"
     ThemeMode.DARK -> "Dark"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GestureActionDropdown(
+    label: String,
+    selected: SoundTriggerAction,
+    enabled: Boolean,
+    onActionSelected: (SoundTriggerAction) -> Unit
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val actions = listOf(
+        SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+        SoundTriggerAction.START_RESUME,
+        SoundTriggerAction.PAUSE,
+        SoundTriggerAction.NEXT_STEP,
+        SoundTriggerAction.LAP,
+        SoundTriggerAction.PARSE,
+        SoundTriggerAction.NONE
+    )
+
+    ExposedDropdownMenuBox(
+        expanded = isExpanded,
+        onExpandedChange = { if (enabled) isExpanded = it }
+    ) {
+        OutlinedTextField(
+            value = selected.toDisplayString(),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            enabled = enabled,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isExpanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+        )
+
+        ExposedDropdownMenu(
+            expanded = isExpanded,
+            onDismissRequest = { isExpanded = false }
+        ) {
+            actions.forEach { action ->
+                DropdownMenuItem(
+                    text = { Text(action.toDisplayString()) },
+                    onClick = {
+                        onActionSelected(action)
+                        isExpanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun SoundTriggerAction.toDisplayString(): String = when (this) {
+    SoundTriggerAction.NONE -> "None"
+    SoundTriggerAction.START_RESUME -> "Start / Resume"
+    SoundTriggerAction.PAUSE -> "Pause"
+    SoundTriggerAction.LAP -> "Lap"
+    SoundTriggerAction.NEXT_STEP -> "Next step"
+    SoundTriggerAction.TOGGLE_PLAY_PAUSE -> "Toggle Play/Pause"
+    SoundTriggerAction.PARSE -> "Parse"
 }
 
 @Composable

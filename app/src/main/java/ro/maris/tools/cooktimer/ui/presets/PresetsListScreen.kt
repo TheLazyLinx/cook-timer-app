@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import android.app.Activity
 import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.audio.sfxClick
@@ -64,6 +66,7 @@ fun PresetsListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var pendingDuplicate by remember { mutableStateOf<Preset?>(null) }
+    val activity = LocalContext.current as? Activity
     val accentButtonColors = ButtonDefaults.buttonColors(
         containerColor = SoftRed,
         contentColor = Color.White
@@ -119,6 +122,13 @@ fun PresetsListScreen(
                             text = "Unlock more presets by purchasing the app.",
                             style = MaterialTheme.typography.bodyMedium
                         )
+                        Button(
+                            onClick = sfxClick(sfx) { vm.startPremiumPurchase(activity) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentButtonColors
+                        ) {
+                            Text("Go Premium")
+                        }
                         TextButton(onClick = sfxClick(sfx) { vm.dismissUpgradeHint() }) {
                             Text("Upgrade Later")
                         }
@@ -187,8 +197,14 @@ fun PresetsListScreen(
                     onRun = sfxClick(sfx) { onRun(preset.id) },
                     onDuplicate = {
                         sfx.play(SfxId.PresetDuplicateClick)
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Free version supports 1 custom preset.")
+                        if (state.isPremium) {
+                            vm.duplicatePreset(source = preset, replaceExisting = false) { newId ->
+                                onEdit(newId)
+                            }
+                        } else {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Free version supports 1 custom preset.")
+                            }
                         }
                     },
                     onEdit = sfxClick(sfx, SfxId.PresetEdit) { onEdit(preset.id) },
@@ -200,21 +216,30 @@ fun PresetsListScreen(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = {},
-                            enabled = false,
+                            onClick = sfxClick(sfx) { vm.onNewPresetClick { onEdit(null) } },
+                            enabled = !state.isCustomLimitReached,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = disabledButtonColors
+                            colors = if (state.isCustomLimitReached) disabledButtonColors else accentButtonColors
                         ) {
                             Text("New Preset")
                         }
-                        Text(
-                            text = "Free version supports 1 custom preset.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = "Delete your existing preset to create a new one.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
+                        if (state.isCustomLimitReached) {
+                            Text(
+                                text = "Free version supports 1 custom preset.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Delete your existing preset to create a new one.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Button(
+                                onClick = sfxClick(sfx) { vm.startPremiumPurchase(activity) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = accentButtonColors
+                            ) {
+                                Text("Go Premium")
+                            }
+                        }
                     }
                 }
             }
