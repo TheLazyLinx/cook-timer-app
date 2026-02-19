@@ -4,6 +4,7 @@ enum class SoundTriggerAction {
     NONE,
     START_RESUME,
     PAUSE,
+    LAP,
     NEXT_STEP,
     TOGGLE_PLAY_PAUSE,
     PARSE

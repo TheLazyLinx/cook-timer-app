@@ -74,6 +74,7 @@ fun StopwatchScreen(
     val detectorState by vm.detectorState.collectAsState()
     val settings by vm.settings.collectAsState(initial = null)
     val historyState by vm.historyState.collectAsState()
+    val isPremium by vm.isPremium.collectAsState()
     val useSegmentedDisplay = settings?.segmentedDisplayEnabled ?: true
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var showHelp by remember { mutableStateOf(false) }
@@ -385,42 +386,50 @@ fun StopwatchScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (recent.laps.isEmpty()) {
+                    if (isPremium) {
+                        if (recent.laps.isEmpty()) {
+                            Text(
+                                text = "No laps recorded.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            recent.laps.reversed().forEach { lap ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Lap ${lap.index}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = formatTime(lap.lapTimeSec),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = "Total: ${formatTime(lap.splitTimeSec)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            }
+                        }
+                    } else {
                         Text(
-                            text = "No laps recorded.",
+                            text = "Upgrade to view lap-by-lap history.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        recent.laps.reversed().forEach { lap ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Lap ${lap.index}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = formatTime(lap.lapTimeSec),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                    Text(
-                                        text = "Total: ${formatTime(lap.splitTimeSec)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        }
                     }
                 }
             }
@@ -459,42 +468,50 @@ fun StopwatchScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (saved.laps.isEmpty()) {
+                    if (isPremium) {
+                        if (saved.laps.isEmpty()) {
+                            Text(
+                                text = "No laps recorded.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            saved.laps.reversed().forEach { lap ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Lap ${lap.index}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = formatTime(lap.lapTimeSec),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = "Total: ${formatTime(lap.splitTimeSec)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            }
+                        }
+                    } else {
                         Text(
-                            text = "No laps recorded.",
+                            text = "Upgrade to view lap-by-lap history.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        saved.laps.reversed().forEach { lap ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Lap ${lap.index}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text(
-                                        text = formatTime(lap.lapTimeSec),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                    Text(
-                                        text = "Total: ${formatTime(lap.splitTimeSec)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        }
                     }
                 }
             }

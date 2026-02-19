@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
@@ -18,6 +21,7 @@ import ro.maris.tools.cooktimer.domain.engine.TimerEngine
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
 import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
+import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
@@ -30,6 +34,7 @@ class RunViewModel @Inject constructor(
     timeProvider: TimeProvider,
     private val presetRepository: PresetRepository,
     private val settingsRepository: SettingsRepository,
+    private val billingRepository: BillingRepository,
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
@@ -47,9 +52,28 @@ class RunViewModel @Inject constructor(
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
     val settings = settingsRepository.observeSettings()
+    val isPremium: StateFlow<Boolean> = billingRepository.entitlement
+        .map { it.isPremium }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = false
+        )
     private val _isScreenVisible = MutableStateFlow(false)
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
+
+    private data class GestureMapping(
+        val doubleTapAction: SoundTriggerAction,
+        val tripleTapAction: SoundTriggerAction
+    )
+
+    private val defaultGestureMapping = GestureMapping(
+        doubleTapAction = SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+        tripleTapAction = SoundTriggerAction.PARSE
+    )
+
+    private val gestureMapping = MutableStateFlow(defaultGestureMapping)
 
     private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
         tapCount.tapTimestamps.forEachIndexed { index, timestampMs ->
@@ -62,8 +86,8 @@ class RunViewModel @Inject constructor(
             )
         }
         val handled = when {
-            tapCount.tapCount >= 3 -> handleTripleTap()
-            tapCount.tapCount >= 2 -> handleSoundTrigger(SoundTriggerAction.TOGGLE_PLAY_PAUSE)
+            tapCount.tapCount >= 3 -> handleSoundTrigger(gestureMapping.value.tripleTapAction)
+            tapCount.tapCount >= 2 -> handleSoundTrigger(gestureMapping.value.doubleTapAction)
             else -> false
         }
         if (handled) {
@@ -126,6 +150,24 @@ class RunViewModel @Inject constructor(
                 } else {
                     soundDetector.stop(consumerId)
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                settingsRepository.observeSettings(),
+                billingRepository.entitlement
+            ) { settings, entitlement ->
+                if (entitlement.isPremium) {
+                    GestureMapping(
+                        doubleTapAction = settings.doubleTapAction,
+                        tripleTapAction = settings.tripleTapAction
+                    )
+                } else {
+                    defaultGestureMapping
+                }
+            }.collectLatest { mapping ->
+                gestureMapping.value = mapping
             }
         }
 
@@ -227,6 +269,10 @@ class RunViewModel @Inject constructor(
                 }
                 return false
             }
+            SoundTriggerAction.LAP -> {
+                lap()
+                return true
+            }
             SoundTriggerAction.NEXT_STEP -> {
                 next()
                 vibrationHelper.vibrateTick()
@@ -265,10 +311,6 @@ class RunViewModel @Inject constructor(
             }
         }
         return false
-    }
-
-    private fun handleTripleTap(): Boolean {
-        return handleSoundTrigger(SoundTriggerAction.PARSE)
     }
 
     private fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {

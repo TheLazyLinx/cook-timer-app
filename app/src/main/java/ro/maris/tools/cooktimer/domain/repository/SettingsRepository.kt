@@ -11,9 +11,11 @@ interface SettingsRepository {
     suspend fun setSoundEffectsEnabled(enabled: Boolean)
     suspend fun setHapticsEnabled(enabled: Boolean)
     suspend fun setSoundDetectionEnabled(enabled: Boolean)
-    suspend fun setSoundTriggerAction(action: SoundTriggerAction)
+    suspend fun setDoubleTapAction(action: SoundTriggerAction)
+    suspend fun setTripleTapAction(action: SoundTriggerAction)
     suspend fun setAllowedSoundProfiles(profiles: Set<String>)
     suspend fun setThemeMode(mode: ThemeMode)
     suspend fun setSegmentedDisplayEnabled(enabled: Boolean)
     suspend fun setHasShownSoundHelpOverlay(hasShown: Boolean)
+    suspend fun setIsPremium(isPremium: Boolean)
 }
