@@ -52,7 +52,6 @@ class SfxPlayer @Inject constructor(
     private var lastPlayAtMs: Long = 0L
     @Volatile
     private var lastSuccessfulPlaybackAtMs: Long = 0L
-    private val lastPlayBySfx: MutableMap<SfxId, Long> = mutableMapOf()
 
     // Active streams tracking
     private data class StreamInfo(
@@ -103,22 +102,23 @@ class SfxPlayer @Inject constructor(
                 }
             }
 
-        // Play
-        lastPlayAtMs = now
-        lastPlayBySfx[sfx] = now
-        val soundId = soundIds[sfx] ?: return
-        
-        val streamId = soundPool.play(soundId, finalVolume, finalVolume, 1, 0, 1f)
-        
-        if (streamId != 0) {
-            lastSuccessfulPlaybackAtMs = now
-            activeStreams.add(
-                StreamInfo(
-                    streamId = streamId,
-                    sfxId = sfx,
-                    startTimeMs = now,
-                    endTimeMs = now + sfx.durationMs,
-                    currentVolume = finalVolume
+            // Play
+            lastPlayAtMs = now
+            val soundId = soundIds[sfx] ?: return
+            val volume = 1.0f
+
+            val streamId = soundPool.play(soundId, volume, volume, 1, 0, 1f)
+
+            if (streamId != 0) {
+                lastSuccessfulPlaybackAtMs = now
+                activeStreams.add(
+                    StreamInfo(
+                        streamId = streamId,
+                        sfxId = sfx,
+                        startTimeMs = now,
+                        endTimeMs = now + sfx.durationMs,
+                        currentVolume = volume
+                    )
                 )
             }
         }
