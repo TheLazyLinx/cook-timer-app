@@ -3,8 +3,11 @@ package ro.maris.tools.cooktimer.ui.sound
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.audio.DetectionDiagnostic
 import ro.maris.tools.cooktimer.audio.SoundDetector
 import javax.inject.Inject
@@ -14,15 +17,51 @@ class DiagnosticViewModel @Inject constructor(
     private val detector: SoundDetector
 ) : ViewModel() {
     val state = detector.state
+    private var lastHandledDetectionCount = 0
+
+    private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
+        tapCount.taps.forEachIndexed { index, event ->
+            detector.annotateGestureForEvent(
+                eventTimestampMs = event.timestampMs,
+                groupId = tapCount.groupId,
+                tapIndex = index + 1,
+                tapCount = tapCount.tapCount,
+                unpairedReason = tapCount.unpairedReason
+            )
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            detector.state.collectLatest { detectorState ->
+                if (detectorState.count < lastHandledDetectionCount) {
+                    lastHandledDetectionCount = detectorState.count
+                }
+                val newCount = (detectorState.count - lastHandledDetectionCount).coerceAtLeast(0)
+                if (newCount > 0) {
+                    detectorState.events
+                        .take(newCount)
+                        .asReversed()
+                        .forEach { event ->
+                            tapRecognizer.onTap(event)
+                        }
+                    lastHandledDetectionCount = detectorState.count
+                }
+            }
+        }
+    }
 
     /** Start detection from the diagnostic screen itself (standalone testing) */
     fun startDetection(): Boolean {
         detector.debugContext = "DIAGNOSTIC"
+        tapRecognizer.clear()
+        lastHandledDetectionCount = detector.state.value.count
         return detector.start("diagnostic")
     }
 
     fun stopDetection() {
         detector.stop("diagnostic")
+        tapRecognizer.clear()
     }
 
     fun clearDiagnostics() {
@@ -58,6 +97,7 @@ class DiagnosticViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        tapRecognizer.clear()
         detector.stop("diagnostic")
     }
 }

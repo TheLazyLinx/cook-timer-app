@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.sqrt
@@ -34,8 +35,10 @@ data class SoundDetectionEvent(
     val type: String = "Unknown",
     val centroid: Float = 0f,
     val tilt: Float = 0f,
+    val zcr: Float = 0f,
+    val flatness: Float = 0f,
     val confidence: Float = 1.0f,
-    val samples: List<Float> = emptyList() // RMS values over time (each 10ms)
+    val samples: List<Float> = emptyList() // RMS trace over time (hop-based)
 )
 
 data class SoundDetectorState(
@@ -54,9 +57,181 @@ data class SoundDetectorState(
     val diagnostics: List<DetectionDiagnostic> = emptyList()
 )
 
+internal data class CadenceProbe(
+    val timestampMs: Long,
+    val durationMs: Int,
+    val centroid: Float,
+    val tilt: Float,
+    val flatness: Float,
+    val zcr: Float
+)
+
+internal data class CadencePatternStats(
+    val eventCount: Int,
+    val meanIntervalMs: Float,
+    val intervalCv: Float
+)
+
+internal object CadencePatternHeuristics {
+    const val DEFAULT_WINDOW_MS = 1600L
+    const val DEFAULT_MIN_EVENTS = 4
+    const val DEFAULT_SUPPRESSION_MS = 1200L
+    const val DEFAULT_PROBE_CONFIDENCE_MIN = 0.80f
+    const val DEFAULT_PROBE_DURATION_MIN_MS = 40
+    const val DEFAULT_PROBE_DURATION_MAX_MS = 180
+    const val DEFAULT_INTERVAL_MIN_MS = 140L
+    const val DEFAULT_INTERVAL_MAX_MS = 520L
+    const val DEFAULT_INTERVAL_CV_MAX = 0.22f
+    const val DEFAULT_CENTROID_SPREAD_PCT_MAX = 0.18f
+    const val DEFAULT_TILT_SPREAD_MAX = 0.40f
+    const val DEFAULT_FLATNESS_SPREAD_MAX = 0.16f
+    const val DEFAULT_ZCR_SPREAD_MAX = 0.16f
+    const val DEFAULT_DURATION_SPREAD_PCT_MAX = 0.55f
+    const val DEFAULT_FOLLOWUP_WINDOW_MS = 420L
+
+    fun isSuppressed(nowMs: Long, suppressUntilMs: Long): Boolean {
+        return nowMs < suppressUntilMs
+    }
+
+    fun isFirstTapLike(
+        candidateAgeMs: Long,
+        acceptedAgeMs: Long,
+        followupWindowMs: Long = DEFAULT_FOLLOWUP_WINDOW_MS
+    ): Boolean {
+        val hasTightFollowup =
+            candidateAgeMs in 20L..followupWindowMs ||
+                acceptedAgeMs in 20L..followupWindowMs
+        return !hasTightFollowup
+    }
+
+    fun pruneHistory(
+        history: ArrayDeque<CadenceProbe>,
+        nowMs: Long,
+        windowMs: Long = DEFAULT_WINDOW_MS,
+        maxCount: Int = 24
+    ) {
+        while (history.isNotEmpty() && nowMs - history.first().timestampMs > windowMs) {
+            history.removeFirst()
+        }
+        while (history.size > maxCount) {
+            history.removeFirst()
+        }
+    }
+
+    fun detectPattern(
+        history: List<CadenceProbe>,
+        nowMs: Long,
+        windowMs: Long = DEFAULT_WINDOW_MS,
+        minEvents: Int = DEFAULT_MIN_EVENTS,
+        intervalMinMs: Long = DEFAULT_INTERVAL_MIN_MS,
+        intervalMaxMs: Long = DEFAULT_INTERVAL_MAX_MS,
+        intervalCvMax: Float = DEFAULT_INTERVAL_CV_MAX,
+        centroidSpreadPctMax: Float = DEFAULT_CENTROID_SPREAD_PCT_MAX,
+        tiltSpreadMax: Float = DEFAULT_TILT_SPREAD_MAX,
+        flatnessSpreadMax: Float = DEFAULT_FLATNESS_SPREAD_MAX,
+        zcrSpreadMax: Float = DEFAULT_ZCR_SPREAD_MAX,
+        durationSpreadPctMax: Float = DEFAULT_DURATION_SPREAD_PCT_MAX
+    ): CadencePatternStats? {
+        if (history.size < minEvents) return null
+        val windowed = history.filter { nowMs - it.timestampMs in 0..windowMs }
+        if (windowed.size < minEvents) return null
+
+        val maxSpan = minOf(windowed.size, 8)
+        for (span in maxSpan downTo minEvents) {
+            val events = windowed.takeLast(span)
+            val stats = evaluateWindow(
+                events = events,
+                intervalMinMs = intervalMinMs,
+                intervalMaxMs = intervalMaxMs,
+                intervalCvMax = intervalCvMax,
+                centroidSpreadPctMax = centroidSpreadPctMax,
+                tiltSpreadMax = tiltSpreadMax,
+                flatnessSpreadMax = flatnessSpreadMax,
+                zcrSpreadMax = zcrSpreadMax,
+                durationSpreadPctMax = durationSpreadPctMax
+            )
+            if (stats != null) return stats
+        }
+        return null
+    }
+
+    private fun evaluateWindow(
+        events: List<CadenceProbe>,
+        intervalMinMs: Long,
+        intervalMaxMs: Long,
+        intervalCvMax: Float,
+        centroidSpreadPctMax: Float,
+        tiltSpreadMax: Float,
+        flatnessSpreadMax: Float,
+        zcrSpreadMax: Float,
+        durationSpreadPctMax: Float
+    ): CadencePatternStats? {
+        if (events.size < 4) return null
+        val intervals = mutableListOf<Long>()
+        for (i in 1 until events.size) {
+            val interval = events[i].timestampMs - events[i - 1].timestampMs
+            if (interval !in intervalMinMs..intervalMaxMs) return null
+            intervals += interval
+        }
+        if (intervals.isEmpty()) return null
+
+        val meanInterval = intervals.average().toFloat()
+        if (meanInterval <= 0f) return null
+        var variance = 0f
+        intervals.forEach { interval ->
+            val d = interval.toFloat() - meanInterval
+            variance += d * d
+        }
+        variance /= intervals.size.toFloat()
+        val stdDev = sqrt(variance)
+        val intervalCv = stdDev / meanInterval
+        if (intervalCv > intervalCvMax) return null
+
+        val centroidMax = events.maxOf { it.centroid }
+        val centroidMin = events.minOf { it.centroid }
+        val centroidAvg = events.map { it.centroid }.average().toFloat().coerceAtLeast(500f)
+        val centroidSpreadPct = (centroidMax - centroidMin) / centroidAvg
+        if (centroidSpreadPct > centroidSpreadPctMax) return null
+
+        val tiltSpread = events.maxOf { it.tilt } - events.minOf { it.tilt }
+        if (tiltSpread > tiltSpreadMax) return null
+
+        val flatnessSpread = events.maxOf { it.flatness } - events.minOf { it.flatness }
+        if (flatnessSpread > flatnessSpreadMax) return null
+
+        val zcrSpread = events.maxOf { it.zcr } - events.minOf { it.zcr }
+        if (zcrSpread > zcrSpreadMax) return null
+
+        val durationMax = events.maxOf { it.durationMs }.toFloat().coerceAtLeast(1f)
+        val durationMin = events.minOf { it.durationMs }.toFloat()
+        val durationSpreadPct = (durationMax - durationMin) / durationMax
+        if (durationSpreadPct > durationSpreadPctMax) return null
+
+        return CadencePatternStats(
+            eventCount = events.size,
+            meanIntervalMs = meanInterval,
+            intervalCv = intervalCv
+        )
+    }
+}
+
+internal fun shouldRejectCadencePattern(
+    isSuppressed: Boolean,
+    isGestureFamily: Boolean,
+    firstTapLike: Boolean,
+    sessionSimilarity: Float?,
+    sessionBypassThreshold: Float,
+    acceptedSignatureBypass: Boolean
+): Boolean {
+    if (!isSuppressed || !isGestureFamily || !firstTapLike) return false
+    val sessionBypass = (sessionSimilarity ?: 0f) >= sessionBypassThreshold
+    return !sessionBypass && !acceptedSignatureBypass
+}
+
 @Singleton
 class SoundDetector @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext context: Context,
+    private val sfxPlayer: SfxPlayer
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -67,8 +242,12 @@ class SoundDetector @Inject constructor(
     var debugContext: String = "Unknown" 
 
     private val sampleRate = 16000
-    private val windowMs = 10
-    private val windowSamples = sampleRate * windowMs / 1000
+    private val fftWindowMs = 10
+    private val hopMs = 5
+    private val windowSamples = sampleRate * fftWindowMs / 1000
+    private val hopSamples = sampleRate * hopMs / 1000
+    private fun framesForMs(ms: Int): Int = ((ms + hopMs - 1) / hopMs).coerceAtLeast(1)
+    private fun durationForFrames(frames: Int): Int = frames * hopMs
     
     // Dynamic Thresholds
     // Lowered back down - 0.025 was obstructing -30dB slaps (~0.032).
@@ -81,11 +260,71 @@ class SoundDetector @Inject constructor(
     private val maxEvents = 50 // Increased history size
     private val maxLogs = 750 // Limit logs to prevent memory bloat
     private val maxDiagnostics = 100 // Diagnostic entries for tuning screen
-    private val confidenceThreshold = 0.78f // Raised from 0.75 to 0.78 to cut marginal Speech FPs (like the 76% one)
+    private val firstTapConfidenceThreshold = 0.82f
+    private val followUpTapConfidenceThreshold = 0.74f
     
     // Chaos Rejection (Pill Rattle, Continuous Noise)
-    private val postEventCheckFrames = 5 // Wait 50ms after event ends to verify quiet
+    private val postEventCheckFrames = framesForMs(50) // Wait 50ms after event ends to verify quiet
     private val postEventQuietRatio = 0.5f // Post-event RMS must drop below 50% of threshold
+    private val playbackBlankingMs = 200L
+    private val playbackBlankDiagCooldownMs = 250L
+    private val nuisanceSimilarityRejectThreshold = 0.82f
+    private val nuisanceSimilarityRejectThresholdMetallic = 0.88f
+    private val nuisanceSimilaritySessionBypassThreshold = 0.78f
+    private val nuisanceReferenceTtlMs = 8 * 60 * 1000L
+    private val nuisanceReferenceMaxCount = 18
+    private val nuisanceMinReferencesToGate = 3
+    private val nuisanceMinStrongReferencesToGate = 1
+    private val cadenceWindowMs = CadencePatternHeuristics.DEFAULT_WINDOW_MS
+    private val cadenceMinEvents = CadencePatternHeuristics.DEFAULT_MIN_EVENTS
+    private val cadenceSuppressionMs = CadencePatternHeuristics.DEFAULT_SUPPRESSION_MS
+    private val cadenceProbeConfidenceMin = CadencePatternHeuristics.DEFAULT_PROBE_CONFIDENCE_MIN
+    private val cadenceProbeDurationMinMs = CadencePatternHeuristics.DEFAULT_PROBE_DURATION_MIN_MS
+    private val cadenceProbeDurationMaxMs = CadencePatternHeuristics.DEFAULT_PROBE_DURATION_MAX_MS
+    private val cadenceIntervalMinMs = CadencePatternHeuristics.DEFAULT_INTERVAL_MIN_MS
+    private val cadenceIntervalMaxMs = CadencePatternHeuristics.DEFAULT_INTERVAL_MAX_MS
+    private val cadenceIntervalCvMax = CadencePatternHeuristics.DEFAULT_INTERVAL_CV_MAX
+    private val cadenceCentroidSpreadPctMax = CadencePatternHeuristics.DEFAULT_CENTROID_SPREAD_PCT_MAX
+    private val cadenceTiltSpreadMax = CadencePatternHeuristics.DEFAULT_TILT_SPREAD_MAX
+    private val cadenceFlatnessSpreadMax = CadencePatternHeuristics.DEFAULT_FLATNESS_SPREAD_MAX
+    private val cadenceZcrSpreadMax = CadencePatternHeuristics.DEFAULT_ZCR_SPREAD_MAX
+    private val cadenceDurationSpreadPctMax = CadencePatternHeuristics.DEFAULT_DURATION_SPREAD_PCT_MAX
+    private val cadenceDiagCooldownMs = 300L
+    private val cadenceFollowupWindowMs = CadencePatternHeuristics.DEFAULT_FOLLOWUP_WINDOW_MS
+
+    private data class SessionTapReference(
+        val family: String,
+        val centroid: Float,
+        val tilt: Float,
+        val zcr: Float,
+        val flatness: Float,
+        val durationMs: Int,
+        val strength: Float,
+        val timestampMs: Long
+    )
+
+    private val sessionReferences = ConcurrentHashMap<String, SessionTapReference>()
+
+    private data class SessionNuisanceReference(
+        val stage: String,
+        val centroid: Float,
+        val tilt: Float,
+        val zcr: Float,
+        val flatness: Float,
+        val durationMs: Int,
+        val strength: Float,
+        val attackRatio: Float,
+        val timestampMs: Long
+    )
+
+    private data class NuisanceSimilarityResult(
+        val similarity: Float,
+        val sourceStage: String?,
+        val totalReferences: Int,
+        val strongReferenceCount: Int
+    )
+
+    private val sessionNuisanceReferences = mutableListOf<SessionNuisanceReference>()
     
     // Profiles
     data class SoundProfile(
@@ -134,6 +373,255 @@ class SoundDetector @Inject constructor(
     )
 
     private val attackThreshold = 2.0f // Increased from 1.4 to 2.0 to reject soft onsets (groans/sighs)
+
+    private fun calibrationFamily(type: String): String? {
+        return when (type.substringBefore(" (").trim()) {
+            "Snap" -> "Snap"
+            "Clap", "Slap" -> "Clap"
+            else -> null
+        }
+    }
+
+    @Synchronized
+    private fun clearSessionCalibration() {
+        sessionReferences.clear()
+        sessionNuisanceReferences.clear()
+    }
+
+    private fun sessionReferenceForType(type: String): SessionTapReference? {
+        val family = calibrationFamily(type) ?: return null
+        return sessionReferences[family]
+    }
+
+    fun onGestureResolvedForCalibration(events: List<SoundDetectionEvent>, tapCount: Int) {
+        if (tapCount < 2 || events.isEmpty()) return
+        val firstFamily = calibrationFamily(events.first().type) ?: return
+        if (sessionReferences.containsKey(firstFamily)) return
+
+        val familyEvents = events.filter { calibrationFamily(it.type) == firstFamily }
+        if (familyEvents.isEmpty()) return
+
+        val sortedByStrength = familyEvents.sortedBy { it.strength }
+        val median = sortedByStrength[sortedByStrength.size / 2]
+
+        sessionReferences.putIfAbsent(
+            firstFamily,
+            SessionTapReference(
+                family = firstFamily,
+                centroid = median.centroid,
+                tilt = median.tilt,
+                zcr = median.zcr,
+                flatness = median.flatness,
+                durationMs = median.durationMs,
+                strength = median.strength,
+                timestampMs = median.timestampMs
+            )
+        )
+    }
+
+    private fun sessionSimilarity(
+        ref: SessionTapReference,
+        centroid: Float,
+        tilt: Float,
+        zcr: Float,
+        flatness: Float,
+        durationMs: Int,
+        strength: Float
+    ): Float {
+        val centroidScore = (1f - (abs(centroid - ref.centroid) / ref.centroid.coerceAtLeast(600f))).coerceIn(0f, 1f)
+        val tiltScore = (1f - (abs(tilt - ref.tilt) / 6f)).coerceIn(0f, 1f)
+        val zcrScore = (1f - (abs(zcr - ref.zcr) / 0.22f)).coerceIn(0f, 1f)
+        val flatnessScore = (1f - (abs(flatness - ref.flatness) / 0.25f)).coerceIn(0f, 1f)
+        val durationScore =
+            (1f - (abs(durationMs - ref.durationMs).toFloat() / ref.durationMs.coerceAtLeast(20).toFloat())).coerceIn(0f, 1f)
+        val strengthRatio = strength / ref.strength.coerceAtLeast(0.001f)
+        val strengthScore = when {
+            strengthRatio in 0.30f..3.00f -> 1f
+            strengthRatio < 0.30f -> (strengthRatio / 0.30f).coerceIn(0f, 1f)
+            else -> (3.00f / strengthRatio).coerceIn(0f, 1f)
+        }
+        return (
+            centroidScore * 0.26f +
+                tiltScore * 0.18f +
+                zcrScore * 0.18f +
+                flatnessScore * 0.20f +
+                durationScore * 0.12f +
+                strengthScore * 0.06f
+            ).coerceIn(0f, 1f)
+    }
+
+    @Synchronized
+    private fun rememberNuisanceReference(
+        stage: String,
+        durationMs: Int,
+        zcr: Float,
+        centroid: Float,
+        tilt: Float,
+        flatness: Float,
+        attackRatio: Float,
+        strength: Float,
+        timestampMs: Long
+    ) {
+        if (durationMs <= 0 || strength <= 0f) return
+        pruneOldNuisanceReferences(timestampMs)
+
+        val duplicateSimilarity = sessionNuisanceReferences.maxOfOrNull { ref ->
+            nuisanceSimilarity(
+                ref = ref,
+                durationMs = durationMs,
+                zcr = zcr,
+                centroid = centroid,
+                tilt = tilt,
+                flatness = flatness,
+                attackRatio = attackRatio,
+                strength = strength
+            )
+        } ?: 0f
+        if (duplicateSimilarity >= 0.90f) return
+
+        sessionNuisanceReferences.add(
+            SessionNuisanceReference(
+                stage = stage,
+                centroid = centroid,
+                tilt = tilt,
+                zcr = zcr,
+                flatness = flatness,
+                durationMs = durationMs,
+                strength = strength,
+                attackRatio = attackRatio,
+                timestampMs = timestampMs
+            )
+        )
+        if (sessionNuisanceReferences.size > nuisanceReferenceMaxCount) {
+            sessionNuisanceReferences.removeAt(0)
+        }
+    }
+
+    @Synchronized
+    private fun bestNuisanceSimilarity(
+        durationMs: Int,
+        zcr: Float,
+        centroid: Float,
+        tilt: Float,
+        flatness: Float,
+        attackRatio: Float,
+        strength: Float,
+        nowMs: Long
+    ): NuisanceSimilarityResult {
+        pruneOldNuisanceReferences(nowMs)
+        val totalReferences = sessionNuisanceReferences.size
+        val strongReferenceCount = sessionNuisanceReferences.count { isStrongNuisanceStage(it.stage) }
+        var best = 0f
+        var source: String? = null
+        for (ref in sessionNuisanceReferences) {
+            val similarity = nuisanceSimilarity(
+                ref = ref,
+                durationMs = durationMs,
+                zcr = zcr,
+                centroid = centroid,
+                tilt = tilt,
+                flatness = flatness,
+                attackRatio = attackRatio,
+                strength = strength
+            )
+            if (similarity > best) {
+                best = similarity
+                source = ref.stage
+            }
+        }
+        return NuisanceSimilarityResult(
+            similarity = best,
+            sourceStage = source,
+            totalReferences = totalReferences,
+            strongReferenceCount = strongReferenceCount
+        )
+    }
+
+    private fun isStrongNuisanceStage(stage: String): Boolean {
+        return stage == "SURFACE_TAP" ||
+            stage == "HARD_SURFACE" ||
+            stage == "CHAOS_POST_RING" ||
+            stage == "METALLIC" ||
+            stage == "RESONANT_IMPACT" ||
+            stage == "BRIGHT_IMPACT" ||
+            stage == "ATTACK_SHAPE" ||
+            stage == "CADENCE_PATTERN" ||
+            stage == "ULTRA_BRIGHT_PING"
+    }
+
+    private fun isStrongAcceptedSignatureMatchForCadenceBypass(
+        bestType: String?,
+        eventTimestampMs: Long,
+        durationMs: Int,
+        centroid: Float,
+        tilt: Float,
+        strength: Float,
+        refType: String?,
+        refTimestampMs: Long,
+        refDurationMs: Int,
+        refCentroid: Float,
+        refTilt: Float,
+        refStrength: Float,
+        followupWindowMs: Long
+    ): Boolean {
+        if (bestType == null || refType == null) return false
+        val ageMs = eventTimestampMs - refTimestampMs
+        if (ageMs !in 20L..followupWindowMs) return false
+
+        val bestFamily = bestType.substringBefore(" (").trim()
+        val refFamily = refType.substringBefore(" (").trim()
+        val typeOrFamilyMatch = bestType == refType || bestFamily == refFamily
+        if (!typeOrFamilyMatch) return false
+
+        val durationDelta = abs(durationMs - refDurationMs)
+        val centroidDeltaPct = abs(centroid - refCentroid) / refCentroid.coerceAtLeast(500f)
+        val tiltDelta = abs(tilt - refTilt)
+        val strengthRatio = strength / refStrength.coerceAtLeast(0.001f)
+
+        return durationDelta <= 45 &&
+            centroidDeltaPct <= 0.20f &&
+            tiltDelta <= 0.35f &&
+            strengthRatio in 0.35f..2.80f
+    }
+
+    private fun nuisanceSimilarity(
+        ref: SessionNuisanceReference,
+        durationMs: Int,
+        zcr: Float,
+        centroid: Float,
+        tilt: Float,
+        flatness: Float,
+        attackRatio: Float,
+        strength: Float
+    ): Float {
+        val centroidScore = (1f - (abs(centroid - ref.centroid) / ref.centroid.coerceAtLeast(700f))).coerceIn(0f, 1f)
+        val tiltScore = (1f - (abs(tilt - ref.tilt) / 1.7f)).coerceIn(0f, 1f)
+        val zcrScore = (1f - (abs(zcr - ref.zcr) / 0.18f)).coerceIn(0f, 1f)
+        val flatnessScore = (1f - (abs(flatness - ref.flatness) / 0.16f)).coerceIn(0f, 1f)
+        val durationScore =
+            (1f - (abs(durationMs - ref.durationMs).toFloat() / ref.durationMs.coerceAtLeast(30).toFloat())).coerceIn(0f, 1f)
+        val attackScore =
+            (1f - (abs(attackRatio - ref.attackRatio) / ref.attackRatio.coerceAtLeast(6f))).coerceIn(0f, 1f)
+        val strengthRatio = strength / ref.strength.coerceAtLeast(0.001f)
+        val strengthScore = when {
+            strengthRatio in 0.45f..2.20f -> 1f
+            strengthRatio < 0.45f -> (strengthRatio / 0.45f).coerceIn(0f, 1f)
+            else -> (2.20f / strengthRatio).coerceIn(0f, 1f)
+        }
+        return (
+            centroidScore * 0.24f +
+                tiltScore * 0.16f +
+                zcrScore * 0.16f +
+                flatnessScore * 0.20f +
+                durationScore * 0.14f +
+                attackScore * 0.06f +
+                strengthScore * 0.04f
+            ).coerceIn(0f, 1f)
+    }
+
+    private fun pruneOldNuisanceReferences(nowMs: Long) {
+        sessionNuisanceReferences.removeAll { nowMs - it.timestampMs > nuisanceReferenceTtlMs }
+    }
 
     private fun getMetricScore(value: Float, min: Float, max: Float): Float {
         // Soft-Plateau Scoring:
@@ -204,11 +692,11 @@ class SoundDetector @Inject constructor(
         }
         val safeTotal = totalEnergy.coerceAtLeast(1e-8f)
 
-        val earlyFrames = minOf(3, trace.size)
+        val earlyFrames = minOf(framesForMs(30), trace.size)
         var earlyEnergy = 0f
         for (i in 0 until earlyFrames) earlyEnergy += energy[i]
 
-        val tailFrames = minOf(6, trace.size)
+        val tailFrames = minOf(framesForMs(60), trace.size)
         var tailEnergy = 0f
         for (i in trace.size - tailFrames until trace.size) tailEnergy += energy[i]
 
@@ -286,6 +774,7 @@ class SoundDetector @Inject constructor(
         avgZcr: Float,
         avgCentroid: Float,
         avgTilt: Float,
+        avgFlatness: Float,
         env: Stage1EnvelopeFeatures
     ): Float {
         if (bestMatch == null) return 0f
@@ -298,33 +787,35 @@ class SoundDetector @Inject constructor(
         val centroidScore = ((avgCentroid - 1000f) / 4000f).coerceIn(0f, 1f)
         val zcrScore = ((avgZcr - 0.08f) / 0.45f).coerceIn(0f, 1f)
         val tiltScore = ((avgTilt + 1.0f) / 1.8f).coerceIn(0f, 1f)
+        val flatnessScore = ((avgFlatness - 0.10f) / 0.50f).coerceIn(0f, 1f)
         val decayHalfScore = when {
             env.decayHalfFrames == Int.MAX_VALUE -> 0f
-            env.decayHalfFrames <= 3 -> 1f
-            env.decayHalfFrames >= 12 -> 0f
-            else -> ((12 - env.decayHalfFrames).toFloat() / 9f).coerceIn(0f, 1f)
+            env.decayHalfFrames <= 6 -> 1f
+            env.decayHalfFrames >= 24 -> 0f
+            else -> ((24 - env.decayHalfFrames).toFloat() / 18f).coerceIn(0f, 1f)
         }
         val decayQuarterScore = when {
             env.decayQuarterFrames == Int.MAX_VALUE -> 0f
-            env.decayQuarterFrames <= 6 -> 1f
-            env.decayQuarterFrames >= 18 -> 0f
-            else -> ((18 - env.decayQuarterFrames).toFloat() / 12f).coerceIn(0f, 1f)
+            env.decayQuarterFrames <= 12 -> 1f
+            env.decayQuarterFrames >= 36 -> 0f
+            else -> ((36 - env.decayQuarterFrames).toFloat() / 24f).coerceIn(0f, 1f)
         }
         val compactTailScore = (1f - env.tailEnergyRatio).coerceIn(0f, 1f)
         val stableEnvelopeScore = (1f - env.bounceRatio).coerceIn(0f, 1f)
         val lowPreNoiseScore = (1f - preEventRatio.coerceIn(0f, 1f))
 
-        var score = 0.15f
-        score += profileConfidence.coerceIn(0f, 1f) * 0.30f
-        score += attackScore * 0.10f
-        score += centroidScore * 0.08f
-        score += zcrScore * 0.07f
-        score += tiltScore * 0.05f
-        score += decayHalfScore * 0.08f
-        score += decayQuarterScore * 0.07f
-        score += compactTailScore * 0.08f
+        var score = 0.10f
+        score += profileConfidence.coerceIn(0f, 1f) * 0.24f
+        score += attackScore * 0.08f
+        score += centroidScore * 0.07f
+        score += zcrScore * 0.06f
+        score += tiltScore * 0.04f
+        score += flatnessScore * 0.10f
+        score += decayHalfScore * 0.07f
+        score += decayQuarterScore * 0.06f
+        score += compactTailScore * 0.07f
         score += stableEnvelopeScore * 0.06f
-        score += lowPreNoiseScore * 0.06f
+        score += lowPreNoiseScore * 0.05f
 
         if (durationMs > 180) score -= 0.08f
         if (durationMs < 20) score -= 0.05f
@@ -332,6 +823,7 @@ class SoundDetector @Inject constructor(
         if (env.monotonicRiseRatio > 0.45f) score -= 0.10f
         if (env.tailEnergyRatio > 0.62f) score -= 0.10f
         if (preEventRatio > 0.55f) score -= 0.07f
+        if (avgFlatness < 0.14f) score -= 0.08f
 
         // Penalize table/contact-like impulses that can still score high on profile overlap.
         val tableCoupledThud =
@@ -350,11 +842,149 @@ class SoundDetector @Inject constructor(
                 avgCentroid in 2300f..3250f &&
                 avgZcr <= 0.38f &&
                 durationMs in 60..180
+        val resonantImpactLike = isResonantImpactSignature(
+            durationMs = durationMs,
+            avgZcr = avgZcr,
+            avgCentroid = avgCentroid,
+            avgTilt = avgTilt,
+            avgFlatness = avgFlatness,
+            attackRatio = attackRatio,
+            peakRms = peakRms,
+            env = env
+        )
+        val ultraBrightPingLike = isUltraBrightPingSignature(
+            durationMs = durationMs,
+            avgZcr = avgZcr,
+            avgCentroid = avgCentroid,
+            avgTilt = avgTilt,
+            avgFlatness = avgFlatness,
+            attackRatio = attackRatio,
+            peakRms = peakRms,
+            env = env
+        )
         if (tableCoupledThud) score -= 0.24f
         if (dampedContactLike) score -= 0.12f
         if (midBandContactLike) score -= 0.14f
+        if (resonantImpactLike) score -= 0.18f
+        if (ultraBrightPingLike) score -= 0.20f
 
         return score.coerceIn(0f, 1f)
+    }
+
+    private fun isLikelySnapTransient(
+        durationMs: Int,
+        avgZcr: Float,
+        avgCentroid: Float,
+        avgTilt: Float,
+        avgFlatness: Float,
+        attackRatio: Float,
+        env: Stage1EnvelopeFeatures
+    ): Boolean {
+        return durationMs in 35..95 &&
+            avgCentroid in 3200f..4200f &&
+            avgZcr in 0.34f..0.58f &&
+            avgTilt in -0.12f..0.30f &&
+            avgFlatness in 0.52f..0.80f &&
+            attackRatio >= 8f &&
+            env.decayHalfFrames <= framesForMs(55) &&
+            env.tailEnergyRatio <= 0.40f
+    }
+
+    // Dedicated nuisance signature for resonant object-on-object impacts
+    // (knife-on-glass, cutlery-on-ceramic, key clinks). Kept first-tap oriented.
+    private fun isResonantImpactSignature(
+        durationMs: Int,
+        avgZcr: Float,
+        avgCentroid: Float,
+        avgTilt: Float,
+        avgFlatness: Float,
+        attackRatio: Float,
+        peakRms: Float,
+        env: Stage1EnvelopeFeatures
+    ): Boolean {
+        val longResonantBand =
+            durationMs in 85..180 &&
+                avgCentroid in 3300f..4600f &&
+                avgZcr in 0.34f..0.54f &&
+                avgTilt in -0.08f..0.45f &&
+                avgFlatness in 0.24f..0.52f
+        val longLowFlatMaterialBand =
+            durationMs in 100..190 &&
+                avgCentroid in 3000f..4500f &&
+                avgZcr in 0.34f..0.50f &&
+                avgTilt in -0.60f..0.30f &&
+                avgFlatness in 0.22f..0.55f
+        val shortBrightBand =
+            durationMs in 45..95 &&
+                avgCentroid in 4100f..5200f &&
+                avgZcr in 0.42f..0.68f &&
+                avgTilt in 0.24f..0.80f &&
+                avgFlatness in 0.48f..0.85f
+        val midBrightMaterialBand =
+            durationMs in 90..150 &&
+                avgCentroid in 4000f..5200f &&
+                avgZcr in 0.38f..0.60f &&
+                avgTilt in 0.20f..0.70f &&
+                avgFlatness in 0.35f..0.58f
+        val hasRingingEnvelope =
+            env.tailEnergyRatio >= 0.24f ||
+                env.decayHalfFrames >= framesForMs(55) ||
+                env.bounceRatio >= 0.18f
+        val likelySnapTransientCore = isLikelySnapTransient(
+            durationMs = durationMs,
+            avgZcr = avgZcr,
+            avgCentroid = avgCentroid,
+            avgTilt = avgTilt,
+            avgFlatness = avgFlatness,
+            attackRatio = attackRatio,
+            env = env
+        )
+        val likelySnapMidTransient =
+            durationMs in 45..110 &&
+                avgCentroid in 3350f..4050f &&
+                avgZcr in 0.35f..0.48f &&
+                avgTilt in -0.12f..0.20f &&
+                avgFlatness in 0.34f..0.62f &&
+                attackRatio >= 6f &&
+                env.tailEnergyRatio <= 0.33f &&
+                env.decayHalfFrames <= framesForMs(70)
+        val likelySnapTransient = likelySnapTransientCore || likelySnapMidTransient
+        val strongEnough = peakRms >= 0.08f
+        val resonantMaterialBand =
+            longResonantBand || longLowFlatMaterialBand || shortBrightBand || midBrightMaterialBand
+        return resonantMaterialBand && hasRingingEnvelope && !likelySnapTransient && strongEnough
+    }
+
+    private fun isUltraBrightPingSignature(
+        durationMs: Int,
+        avgZcr: Float,
+        avgCentroid: Float,
+        avgTilt: Float,
+        avgFlatness: Float,
+        attackRatio: Float,
+        peakRms: Float,
+        env: Stage1EnvelopeFeatures
+    ): Boolean {
+        val shortHighBand =
+            durationMs in 55..130 &&
+                avgCentroid >= 4500f &&
+                avgZcr >= 0.46f &&
+                avgTilt >= 0.30f &&
+                avgFlatness in 0.40f..0.62f &&
+                peakRms >= 0.06f
+        val envelopeSuggestive =
+            env.tailEnergyRatio >= 0.16f ||
+                env.decayHalfFrames >= framesForMs(40) ||
+                env.bounceRatio >= 0.12f
+        val attackSuggestive =
+            attackRatio <= 70f || env.monotonicRiseRatio >= 0.25f
+        val likelyNaturalSnapOutlier =
+            durationMs in 35..95 &&
+                avgCentroid <= 4550f &&
+                avgFlatness >= 0.62f &&
+                avgTilt <= 0.32f &&
+                avgZcr <= 0.58f
+        return shortHighBand && envelopeSuggestive && attackSuggestive && !likelyNaturalSnapOutlier
     }
 
     @Volatile private var running = false
@@ -375,6 +1005,7 @@ class SoundDetector @Inject constructor(
         if (permission != PackageManager.PERMISSION_GRANTED) {
             return false
         }
+        clearSessionCalibration()
         running = true
         recordJob = scope.launch {
             runRecorderLoop()
@@ -401,6 +1032,7 @@ class SoundDetector @Inject constructor(
             Log.e("SoundDetector", "Error stopping recorder in stop()", e)
         }
         recorder = null
+        clearSessionCalibration()
 
         // Preserve history (logs, events, rejection reason) so user can inspect them after stopping.
         _state.update { it.copy(isLit = false, rms = 0f, currentRms = 0f, noiseFloor = 0f) }
@@ -516,16 +1148,18 @@ class SoundDetector @Inject constructor(
             }
         }
         
-        val buffer = ShortArray(windowSamples)
-        val floatBuffer = FloatArray(windowSamples) // Check that allocation is outside loop
+        val hopBuffer = ShortArray(hopSamples)
+        val analysisBuffer = ShortArray(windowSamples)
+        val floatBuffer = FloatArray(windowSamples)
+        var hasPrimedAnalysisWindow = false
         var noiseFloor = 0.005f
         var flatlineCount = 0
-        val maxFlatlineBeforeRestart = 100 // Reduced to ~1 second to catch dropouts faster
+        val maxFlatlineBeforeRestart = framesForMs(1000)
         
         // Data Normalization (Warm-up)
         // We start with a high "learning rate" to quickly snap to the room's noise level
         // preventing the "Latch-up" bug where noise > threshold prevents threshold from rising.
-        var warmUpFrames = 50 // 500ms
+        var warmUpFrames = framesForMs(500)
         val fastNoiseAlpha = 0.25f // Very fast adaptation during warmup
         
         // HPF State (Simple 1st Order) for ~2000Hz cutoff at 16000Hz sample rate
@@ -548,6 +1182,7 @@ class SoundDetector @Inject constructor(
         var eventAccumulatedZcr = 0f
         var eventAccumulatedCentroid = 0f // Sum of centroids during event
         var eventAccumulatedTilt = 0f
+        var eventAccumulatedFlatness = 0f
         var eventPeakRms = 0f
         var eventPeakRaw = 0f
         var framesSincePeak = 0
@@ -555,6 +1190,11 @@ class SoundDetector @Inject constructor(
         val eventRmsTrace = mutableListOf<Float>()
         var preEventNoiseAvg = 0f
         var consecutiveLoudFrames = 0
+        var lastPlaybackBlankDiagMs = 0L
+        val cadenceProbeHistory = ArrayDeque<CadenceProbe>()
+        var cadenceSuppressUntilMs = 0L
+        var lastCadenceDiagMs = 0L
+        var lastCadencePatternStats: CadencePatternStats? = null
         
         // Frame counter for chaos-gate exclusion
         var frameCounter = 0L
@@ -585,6 +1225,7 @@ class SoundDetector @Inject constructor(
         var thresholdAtEventEnd = 0f
         var postEventMaxRmsDuringCheck = 0f
         var pendingProfileScores: List<ProfileScore> = emptyList()
+        var pendingSessionSimilarity: Float? = null
         
         // Diagnostic capture vars (saved at trigger time for use at rejection/acceptance)
         var eventTriggerRms = 0f
@@ -608,6 +1249,8 @@ class SoundDetector @Inject constructor(
             overrideAvgZcr: Float? = null,
             overrideAvgCentroid: Float? = null,
             overrideAvgTilt: Float? = null,
+            overrideAvgFlatness: Float? = null,
+            sessionSimilarity: Float? = null,
             overridePreEventNoiseAvg: Float? = null
         ) {
             val frames = eventHighRmsFrames.coerceAtLeast(1)
@@ -623,7 +1266,7 @@ class SoundDetector @Inject constructor(
                 preEventNoiseAvg = overridePreEventNoiseAvg ?: preEventNoiseAvg,
                 triggerRms = eventTriggerRms,
                 attackRatio = eventAttackRatio,
-                durationMs = overrideDurationMs ?: (frames * windowMs),
+                durationMs = overrideDurationMs ?: durationForFrames(frames),
                 peakRms = eventPeakRms,
                 peakRaw = eventPeakRaw,
                 sustainRatio = sustainRatio,
@@ -635,6 +1278,8 @@ class SoundDetector @Inject constructor(
                 avgZcr = overrideAvgZcr ?: (eventAccumulatedZcr / frames),
                 avgCentroid = overrideAvgCentroid ?: (eventAccumulatedCentroid / frames),
                 avgTilt = overrideAvgTilt ?: (eventAccumulatedTilt / frames),
+                avgFlatness = overrideAvgFlatness ?: (eventAccumulatedFlatness / frames),
+                sessionSimilarity = sessionSimilarity,
                 bestProfileName = bestProfileName,
                 bestConfidence = bestConfidence,
                 allProfileScores = allProfileScores
@@ -643,7 +1288,7 @@ class SoundDetector @Inject constructor(
         
         try {
             currentRecorder.startRecording()
-            Log.d("SoundDetector", "Recording started. Window: ${windowMs}ms")
+            Log.d("SoundDetector", "Recording started. Window: ${fftWindowMs}ms Hop: ${hopMs}ms")
 
             while (running) {
             if (currentRecorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
@@ -653,34 +1298,63 @@ class SoundDetector @Inject constructor(
                 continue
             }
 
-            val read = currentRecorder.read(buffer, 0, buffer.size)
-            if (read < 0) {
-                Log.e("SoundDetector", "Read error: $read")
-                delay(50)
-                continue
+            if (!hasPrimedAnalysisWindow) {
+                val readPrime = currentRecorder.read(analysisBuffer, 0, analysisBuffer.size)
+                if (readPrime < 0) {
+                    Log.e("SoundDetector", "Read error while priming analysis window: $readPrime")
+                    delay(50)
+                    continue
+                }
+                if (readPrime < analysisBuffer.size) {
+                    delay(10)
+                    continue
+                }
+                hasPrimedAnalysisWindow = true
+            } else {
+                val readHop = currentRecorder.read(hopBuffer, 0, hopBuffer.size)
+                if (readHop < 0) {
+                    Log.e("SoundDetector", "Read error: $readHop")
+                    delay(50)
+                    continue
+                }
+                if (readHop < hopSamples) {
+                    delay(10)
+                    continue
+                }
+                System.arraycopy(
+                    analysisBuffer,
+                    hopSamples,
+                    analysisBuffer,
+                    0,
+                    windowSamples - hopSamples
+                )
+                System.arraycopy(
+                    hopBuffer,
+                    0,
+                    analysisBuffer,
+                    windowSamples - hopSamples,
+                    hopSamples
+                )
             }
-            if (read == 0) {
-                delay(10)
-                continue
-            }
+
+            val analysisRead = windowSamples
 
             // 1. Calculate Statistics for this Window
             // Remove DC Offset first!
             var dcSum = 0L
-            for (i in 0 until read) {
-                dcSum += buffer[i]
+            for (i in 0 until analysisRead) {
+                dcSum += analysisBuffer[i]
             }
-            val dcOffset = (dcSum / read).toInt() // integer mean
+            val dcOffset = (dcSum / analysisRead).toInt() // integer mean
             
             var sum = 0.0
             var hpfSum = 0.0
             var peak = 0.0
             var zeroCrossings = 0
-            // Reuse pre-allocated buffer, but be careful if read < windowSamples.
-            // We use 'read' as the limit for loops.
+            // Reuse pre-allocated buffer.
             
-            for (i in 0 until read) {
-                val v = (buffer[i] - dcOffset).toFloat()
+            for (i in 0 until analysisRead) {
+                val v = (analysisBuffer[i] - dcOffset).toFloat()
                 floatBuffer[i] = v
                 val absV = abs(v)
                 if (absV > peak) peak = absV.toDouble()
@@ -701,19 +1375,18 @@ class SoundDetector @Inject constructor(
                 }
             }
             
-            val rms = sqrt(sum / read) / 32768.0
-            val hpfRms = sqrt(hpfSum / read) / 32768.0
+            val rms = sqrt(sum / analysisRead) / 32768.0
+            val hpfRms = sqrt(hpfSum / analysisRead) / 32768.0
             val peakNorm = (peak / 32768.0).coerceAtMost(1.0)
             val rmsF = rms.toFloat()
             val hpfRmsF = hpfRms.toFloat()
-            val zcr = zeroCrossings.toFloat() / read.coerceAtLeast(1)
+            val zcr = zeroCrossings.toFloat() / analysisRead.coerceAtLeast(1)
             
             // Calculate Spectral Features
-            // If read mismatch (rare), copy. Otherwise use pre-allocated buffer.
-            val inputForFft = if (read == floatBuffer.size) floatBuffer else floatBuffer.copyOfRange(0, read)
-            val spectralFeatures = SoundUtils.calculateSpectralFeatures(inputForFft, sampleRate)
+            val spectralFeatures = SoundUtils.calculateSpectralFeatures(floatBuffer, sampleRate)
             val centroid = spectralFeatures.centroid
             val tilt = spectralFeatures.tilt
+            val flatness = spectralFeatures.flatness
 
             // Flatline detection
             if (rmsF < 0.0001f && peakNorm < 0.0001) {
@@ -751,7 +1424,8 @@ class SoundDetector @Inject constructor(
                             Log.e("SoundDetector", "Error recreating AEC", e)
                         }
                         flatlineCount = 0
-                        warmUpFrames = 50 // Reset warm-up to silence the "pop" of restarting and recalibrate noise floor
+                        warmUpFrames = framesForMs(500) // Reset warm-up to silence the "pop" of restarting and recalibrate noise floor
+                        hasPrimedAnalysisWindow = false
                         recentSamples.clear() // Clear dead history so it doesn't skew statistics
                         continue
                     } else {
@@ -790,7 +1464,7 @@ class SoundDetector @Inject constructor(
             // it's not a snap/slap anymore, it's the new environment level.
             if (rmsF > threshold) {
                 consecutiveLoudFrames++
-                if (consecutiveLoudFrames > 200) { // 2.0 seconds
+                if (consecutiveLoudFrames > framesForMs(2000)) {
                     // Force Adapt: Drag noise floor UP towards the current RMS
                     // We use a stronger alpha here to escape the latch-up quickly
                     noiseFloor = (noiseFloor * 0.95f) + (rmsF * 0.05f)
@@ -812,6 +1486,7 @@ class SoundDetector @Inject constructor(
                     eventAccumulatedZcr += zcr
                     eventAccumulatedCentroid += centroid
                     eventAccumulatedTilt += tilt
+                    eventAccumulatedFlatness += flatness
                     eventRmsTrace.add(rmsF)
                     
                     if (rmsF > eventPeakRms) {
@@ -827,7 +1502,7 @@ class SoundDetector @Inject constructor(
                     // Check at T+50ms or T+60ms
                     // If energy is still > 50% of peak, it's likely speech (vowel sustain) or noise.
                     // Snaps and Slaps are transient and should have decayed significantly by 50ms.
-                    if (eventHighRmsFrames == 5 || eventHighRmsFrames == 6) {
+                    if (eventHighRmsFrames == framesForMs(50) || eventHighRmsFrames == framesForMs(60)) {
                         val ratio = if (eventPeakRms > 0) rmsF / eventPeakRms else 0f
                         val isGestureControlContext = !debugContext.equals("DIAGNOSTIC", ignoreCase = true)
                         val candidateAgeMs = eventStartTimestamp - lastCandidateTimestampMs
@@ -842,11 +1517,11 @@ class SoundDetector @Inject constructor(
                             if (isMonitoringEvent) {
                                 emitEventDiag(
                                     "SUSTAIN",
-                                    "Ratio ${"%.2f".format(ratio)} at ${eventHighRmsFrames*windowMs}ms (>${"%.2f".format(sustainRejectRatio)})",
+                                    "Ratio ${"%.2f".format(ratio)} at ${durationForFrames(eventHighRmsFrames)}ms (>${"%.2f".format(sustainRejectRatio)})",
                                     sustainRatio = ratio
                                 )
                             }
-                            Log.d("SoundDetector", "Rejected: Sustained/Speech (Ratio $ratio at ${eventHighRmsFrames*10}ms)")
+                            Log.d("SoundDetector", "Rejected: Sustained/Speech (Ratio $ratio at ${durationForFrames(eventHighRmsFrames)}ms)")
                             isMonitoringEvent = false
                         }
                     }
@@ -855,9 +1530,9 @@ class SoundDetector @Inject constructor(
                     // If the peak happened > 60ms into the event, it's a swell/crescendo (impulse peaking is instant).
                     // Exception: Very long events might have multiple peaks, but we assume impulse snaps peak early.
                     val framesAtPeak = eventHighRmsFrames - framesSincePeak
-                    if (framesAtPeak > 6 && rmsF > threshold * 2.0f) { // Only strict on loud sounds
-                          if (isMonitoringEvent) emitEventDiag("LATE_PEAK", "Peak at frame $framesAtPeak (${framesAtPeak*windowMs}ms into event)")
-                          Log.d("SoundDetector", "Rejected: Slow Intensity Rise (Peak at ${framesAtPeak*10}ms)")
+                    if (framesAtPeak > framesForMs(60) && rmsF > threshold * 2.0f) { // Only strict on loud sounds
+                          if (isMonitoringEvent) emitEventDiag("LATE_PEAK", "Peak at frame $framesAtPeak (${durationForFrames(framesAtPeak)}ms into event)")
+                          Log.d("SoundDetector", "Rejected: Slow Intensity Rise (Peak at ${durationForFrames(framesAtPeak)}ms)")
                           isMonitoringEvent = false
                     }
                     
@@ -870,7 +1545,7 @@ class SoundDetector @Inject constructor(
                     if (hasDippedFromPeak && rmsF > eventPeakRms * 0.7f) {
                         // Rebound detected! (Structure: Peak -> Dip -> Rise again)
                         // Ignore rebound check for very short events (like snaps) which are messy by nature
-                        val currentDurationMs = eventHighRmsFrames * windowMs
+                        val currentDurationMs = durationForFrames(eventHighRmsFrames)
                         if (currentDurationMs > 150) {
                             if (isMonitoringEvent) emitEventDiag("REBOUND", "Double peak at ${currentDurationMs}ms")
                             Log.d("SoundDetector", "Rejected: Bouncy signal (multiple peaks)")
@@ -879,7 +1554,7 @@ class SoundDetector @Inject constructor(
                     }
 
                     // Duration Check (Fail if too long)
-                    val currentDurationMs = eventHighRmsFrames * windowMs
+                    val currentDurationMs = durationForFrames(eventHighRmsFrames)
                     // Use the longest possible profile as the absolute max to stop checking early
                     if (currentDurationMs > 300) { 
                         if (isMonitoringEvent) emitEventDiag("DURATION", "Too long: ${currentDurationMs}ms > 300ms")
@@ -888,7 +1563,7 @@ class SoundDetector @Inject constructor(
                     }
                     
                     // Decay Check (Fail if tail is too loud after peak)
-                    val decayCheckFrame = 6 // 60ms after peak
+                    val decayCheckFrame = framesForMs(60)
                     if (framesSincePeak == decayCheckFrame) {
                         val ratio = if (eventPeakRms > 0) rmsF / eventPeakRms else 0f
                         val isGestureControlContext = !debugContext.equals("DIAGNOSTIC", ignoreCase = true)
@@ -914,10 +1589,11 @@ class SoundDetector @Inject constructor(
                     }
                 } else {
                     // Signal dropped -> End of Event -> Analyze it
-                    val durationMs = eventHighRmsFrames * windowMs
+                    val durationMs = durationForFrames(eventHighRmsFrames)
                     val avgZcr = eventAccumulatedZcr / eventHighRmsFrames.coerceAtLeast(1)
                     val avgCentroid = eventAccumulatedCentroid / eventHighRmsFrames.coerceAtLeast(1)
                     val avgTilt = eventAccumulatedTilt / eventHighRmsFrames.coerceAtLeast(1)
+                    val avgFlatness = eventAccumulatedFlatness / eventHighRmsFrames.coerceAtLeast(1)
                     
                     var bestMatch: SoundProfile? = null
                     var bestConfidence = 0f
@@ -956,6 +1632,11 @@ class SoundDetector @Inject constructor(
 
                     // Bias toward Snap for short, bright transients when scores are close.
                     val isDiagnosticContext = debugContext.equals("DIAGNOSTIC", ignoreCase = true)
+                    val isGestureControlContext = !isDiagnosticContext
+                    val candidateAgeMs = eventStartTimestamp - lastCandidateTimestampMs
+                    val acceptedAgeMs = eventStartTimestamp - lastAcceptedTimestampMs
+                    val hasRecentTapReference = isGestureControlContext &&
+                        (candidateAgeMs in 20L..1000L || acceptedAgeMs in 20L..1400L)
                     val clapLikeFamily = bestMatch?.name?.startsWith("Clap") == true || bestMatch?.name?.startsWith("Slap") == true
                     val snapLikeImpulse =
                         durationMs <= 95 &&
@@ -1022,22 +1703,263 @@ class SoundDetector @Inject constructor(
                     }
 
                     val envelopeFeatures = extractEnvelopeFeatures(eventRmsTrace, eventPeakRms)
-                    val effectiveConfidenceThreshold = if (isDiagnosticContext) 0.75f else confidenceThreshold
+                    val effectiveConfidenceThreshold = when {
+                        isDiagnosticContext -> 0.80f
+                        hasRecentTapReference -> followUpTapConfidenceThreshold
+                        else -> firstTapConfidenceThreshold
+                    }
                     var isValid = bestMatch != null && bestConfidence >= effectiveConfidenceThreshold
                     var rejectionReason: String? = null
+                    var sessionSimilarityValue: Float? = null
+
+                    // Per-session family calibration gate.
+                    if (isValid && bestMatch != null) {
+                        val ref = sessionReferenceForType(bestMatch.name)
+                        if (ref != null) {
+                            val similarity = sessionSimilarity(
+                                ref = ref,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                zcr = avgZcr,
+                                flatness = avgFlatness,
+                                durationMs = durationMs,
+                                strength = eventPeakRms
+                            )
+                            sessionSimilarityValue = similarity
+                            if (similarity < 0.62f) {
+                                rejectionReason =
+                                    "Session mismatch: ${"%.2f".format(similarity)} < 0.62"
+                                Log.d("SoundDetector", "Rejected: $rejectionReason")
+                                isValid = false
+                                emitEventDiag(
+                                    "SESSION_MISMATCH",
+                                    rejectionReason,
+                                    overrideDurationMs = durationMs,
+                                    overrideAvgZcr = avgZcr,
+                                    overrideAvgCentroid = avgCentroid,
+                                    overrideAvgTilt = avgTilt,
+                                    overrideAvgFlatness = avgFlatness,
+                                    bestProfileName = bestMatch.name,
+                                    bestConfidence = bestConfidence,
+                                    allProfileScores = allScores,
+                                    sessionSimilarity = sessionSimilarityValue
+                                )
+                            }
+                        }
+                    }
+
+                    val bestFamily = bestMatch?.name?.substringBefore(" (")?.trim()
+                    val isGestureFamily = bestFamily == "Snap" || bestFamily == "Clap" || bestFamily == "Slap"
+
+                    // Cadence probe capture:
+                    // Learn periodic nuisance streams even from near-miss events so suppression
+                    // can engage before they become actionable multi-taps.
+                    if (isGestureFamily &&
+                        bestConfidence >= cadenceProbeConfidenceMin &&
+                        durationMs in cadenceProbeDurationMinMs..cadenceProbeDurationMaxMs
+                    ) {
+                        CadencePatternHeuristics.pruneHistory(
+                            history = cadenceProbeHistory,
+                            nowMs = eventStartTimestamp,
+                            windowMs = cadenceWindowMs
+                        )
+                        cadenceProbeHistory.addLast(
+                            CadenceProbe(
+                                timestampMs = eventStartTimestamp,
+                                durationMs = durationMs,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                zcr = avgZcr
+                            )
+                        )
+                        CadencePatternHeuristics.pruneHistory(
+                            history = cadenceProbeHistory,
+                            nowMs = eventStartTimestamp,
+                            windowMs = cadenceWindowMs
+                        )
+                        val cadenceStats = CadencePatternHeuristics.detectPattern(
+                            history = cadenceProbeHistory.toList(),
+                            nowMs = eventStartTimestamp,
+                            windowMs = cadenceWindowMs,
+                            minEvents = cadenceMinEvents,
+                            intervalMinMs = cadenceIntervalMinMs,
+                            intervalMaxMs = cadenceIntervalMaxMs,
+                            intervalCvMax = cadenceIntervalCvMax,
+                            centroidSpreadPctMax = cadenceCentroidSpreadPctMax,
+                            tiltSpreadMax = cadenceTiltSpreadMax,
+                            flatnessSpreadMax = cadenceFlatnessSpreadMax,
+                            zcrSpreadMax = cadenceZcrSpreadMax,
+                            durationSpreadPctMax = cadenceDurationSpreadPctMax
+                        )
+                        if (cadenceStats != null) {
+                            cadenceSuppressUntilMs = maxOf(cadenceSuppressUntilMs, eventStartTimestamp + cadenceSuppressionMs)
+                            lastCadencePatternStats = cadenceStats
+                            if (eventStartTimestamp - lastCadenceDiagMs >= cadenceDiagCooldownMs) {
+                                lastCadenceDiagMs = eventStartTimestamp
+                                Log.d(
+                                    "SoundDetector",
+                                    "Cadence suppression armed: n=${cadenceStats.eventCount} mean=${"%.0f".format(cadenceStats.meanIntervalMs)}ms cv=${"%.2f".format(cadenceStats.intervalCv)}"
+                                )
+                            }
+                        }
+                    } else {
+                        CadencePatternHeuristics.pruneHistory(
+                            history = cadenceProbeHistory,
+                            nowMs = eventStartTimestamp,
+                            windowMs = cadenceWindowMs
+                        )
+                    }
+
+                    // Periodic cadence suppression:
+                    // while active, reject first-tap-like candidates only.
+                    if (isValid &&
+                        isGestureFamily &&
+                        CadencePatternHeuristics.isSuppressed(eventStartTimestamp, cadenceSuppressUntilMs)
+                    ) {
+                        val firstTapLike = CadencePatternHeuristics.isFirstTapLike(
+                            candidateAgeMs = candidateAgeMs,
+                            acceptedAgeMs = acceptedAgeMs,
+                            followupWindowMs = cadenceFollowupWindowMs
+                        )
+                        if (firstTapLike) {
+                            val acceptedSignatureBypass = isStrongAcceptedSignatureMatchForCadenceBypass(
+                                bestType = bestMatch?.name,
+                                eventTimestampMs = eventStartTimestamp,
+                                durationMs = durationMs,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                strength = eventPeakRms,
+                                refType = lastAcceptedType,
+                                refTimestampMs = lastAcceptedTimestampMs,
+                                refDurationMs = lastAcceptedDurationMs,
+                                refCentroid = lastAcceptedCentroid,
+                                refTilt = lastAcceptedTilt,
+                                refStrength = lastAcceptedStrength,
+                                followupWindowMs = cadenceFollowupWindowMs
+                            )
+                            val shouldRejectCadence = shouldRejectCadencePattern(
+                                isSuppressed = true,
+                                isGestureFamily = isGestureFamily,
+                                firstTapLike = true,
+                                sessionSimilarity = sessionSimilarityValue,
+                                sessionBypassThreshold = nuisanceSimilaritySessionBypassThreshold,
+                                acceptedSignatureBypass = acceptedSignatureBypass
+                            )
+                            if (shouldRejectCadence) {
+                                val cadenceStats = lastCadencePatternStats
+                                rejectionReason = if (cadenceStats != null) {
+                                    "Cadence Pattern: n=${cadenceStats.eventCount} mean=${"%.0f".format(cadenceStats.meanIntervalMs)}ms cv=${"%.2f".format(cadenceStats.intervalCv)}"
+                                } else {
+                                    "Cadence Pattern: suppression active"
+                                }
+                                Log.d("SoundDetector", "Rejected: $rejectionReason")
+                                isValid = false
+                                rememberNuisanceReference(
+                                    stage = "CADENCE_PATTERN",
+                                    durationMs = durationMs,
+                                    zcr = avgZcr,
+                                    centroid = avgCentroid,
+                                    tilt = avgTilt,
+                                    flatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    strength = eventPeakRms,
+                                    timestampMs = eventStartTimestamp
+                                )
+                                emitEventDiag(
+                                    "CADENCE_PATTERN",
+                                    rejectionReason,
+                                    overrideDurationMs = durationMs,
+                                    overrideAvgZcr = avgZcr,
+                                    overrideAvgCentroid = avgCentroid,
+                                    overrideAvgTilt = avgTilt,
+                                    overrideAvgFlatness = avgFlatness,
+                                    bestProfileName = bestMatch?.name,
+                                    bestConfidence = bestConfidence,
+                                    allProfileScores = allScores,
+                                    sessionSimilarity = sessionSimilarityValue
+                                )
+                            }
+                        }
+                    }
+
+                    // Session nuisance memory gate:
+                    // if this looks highly similar to previously rejected impact signatures,
+                    // block it early (first-tap path only).
+                    if (isValid && !hasRecentTapReference) {
+                        if (isGestureFamily) {
+                            val nuisance = bestNuisanceSimilarity(
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                nowMs = eventStartTimestamp
+                            )
+                            val protectedBySession =
+                                (sessionSimilarityValue ?: 0f) >= nuisanceSimilaritySessionBypassThreshold
+                            val hasEnoughNuisanceHistory =
+                                nuisance.totalReferences >= nuisanceMinReferencesToGate &&
+                                    nuisance.strongReferenceCount >= nuisanceMinStrongReferencesToGate
+                            val nuisanceRejectThreshold = when {
+                                nuisance.sourceStage == "METALLIC" -> nuisanceSimilarityRejectThresholdMetallic
+                                else -> nuisanceSimilarityRejectThreshold
+                            }
+                            if (!protectedBySession && hasEnoughNuisanceHistory && nuisance.similarity >= nuisanceRejectThreshold) {
+                                rejectionReason =
+                                    "Nuisance Similarity: ${"%.2f".format(nuisance.similarity)} >= ${"%.2f".format(nuisanceRejectThreshold)} (${nuisance.sourceStage ?: "unknown"}) refs=${nuisance.totalReferences}/${nuisance.strongReferenceCount}"
+                                Log.d("SoundDetector", "Rejected: $rejectionReason")
+                                isValid = false
+                                emitEventDiag(
+                                    "NUISANCE_SIMILARITY",
+                                    rejectionReason,
+                                    overrideDurationMs = durationMs,
+                                    overrideAvgZcr = avgZcr,
+                                    overrideAvgCentroid = avgCentroid,
+                                    overrideAvgTilt = avgTilt,
+                                    overrideAvgFlatness = avgFlatness,
+                                    bestProfileName = bestMatch?.name,
+                                    bestConfidence = bestConfidence,
+                                    allProfileScores = allScores,
+                                    sessionSimilarity = sessionSimilarityValue
+                                )
+                            }
+                        }
+                    }
+
+                    // Additional low-flatness reject for gesture families.
+                    if (isValid && !hasRecentTapReference) {
+                        val family = bestMatch?.name?.substringBefore(" (")?.trim()
+                        val isGestureFamily = family == "Snap" || family == "Clap" || family == "Slap"
+                        if (isGestureFamily && avgFlatness < 0.16f) {
+                            rejectionReason = "Low flatness: ${"%.3f".format(avgFlatness)} < 0.160"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            emitEventDiag(
+                                "LOW_FLATNESS",
+                                rejectionReason,
+                                overrideDurationMs = durationMs,
+                                overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid,
+                                overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
+                                bestProfileName = bestMatch?.name,
+                                bestConfidence = bestConfidence,
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
+                            )
+                        }
+                    }
 
                     // Stage 1 refinement: reject complex/ringing envelopes earlier.
                     if (isValid) {
-                        val isGestureControlContext = !debugContext.equals("DIAGNOSTIC", ignoreCase = true)
-                        val candidateAgeMs = eventStartTimestamp - lastCandidateTimestampMs
-                        val acceptedAgeMs = eventStartTimestamp - lastAcceptedTimestampMs
-                        val hasRecentTapReference = isGestureControlContext &&
-                            (candidateAgeMs in 20L..1000L || acceptedAgeMs in 20L..1400L)
                         val envelopeComplex =
                             !hasRecentTapReference &&
                                 durationMs in 50..220 &&
                                 envelopeFeatures.tailEnergyRatio >= 0.66f &&
-                                envelopeFeatures.decayHalfFrames >= 8 &&
+                                envelopeFeatures.decayHalfFrames >= 16 &&
                                 envelopeFeatures.monotonicRiseRatio >= 0.30f
                         if (envelopeComplex) {
                             rejectionReason =
@@ -1051,9 +1973,11 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch?.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
@@ -1065,9 +1989,9 @@ class SoundDetector @Inject constructor(
                          Log.d("SoundDetector", "Rejected: $rejectionReason")
                          emitEventDiag("LOW_CONFIDENCE", rejectionReason,
                              overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
-                             overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                             overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt, overrideAvgFlatness = avgFlatness,
                              bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
-                            allProfileScores = allScores)
+                            allProfileScores = allScores, sessionSimilarity = sessionSimilarityValue)
                     }
 
                     // Table/surface taps near the mic can score as Snap/Clap variants despite being non-gesture thuds.
@@ -1101,7 +2025,7 @@ class SoundDetector @Inject constructor(
                                 avgCentroid <= 2300f &&
                                 avgTilt <= -0.95f &&
                                 eventAttackRatio <= 10f &&
-                                (envelopeFeatures.tailEnergyRatio >= 0.30f || envelopeFeatures.decayHalfFrames >= 6)
+                                (envelopeFeatures.tailEnergyRatio >= 0.30f || envelopeFeatures.decayHalfFrames >= 12)
                         val looksLikeSurfaceTap =
                             legacyWetClapSurfaceTap || stronglyTableCoupled || dampedContactImpact
                         if (looksLikeSurfaceTap) {
@@ -1109,6 +2033,17 @@ class SoundDetector @Inject constructor(
                                 "Surface Tap: D=${durationMs}ms Z=${"%.2f".format(avgZcr)} C=${"%.0f".format(avgCentroid)} T=${"%.2f".format(avgTilt)}"
                             Log.d("SoundDetector", "Rejected: $rejectionReason")
                             isValid = false
+                            rememberNuisanceReference(
+                                stage = "SURFACE_TAP",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
                             emitEventDiag(
                                 "SURFACE_TAP",
                                 rejectionReason,
@@ -1116,9 +2051,11 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
@@ -1144,12 +2081,23 @@ class SoundDetector @Inject constructor(
                                 avgZcr <= 0.40f &&
                                 eventAttackRatio <= 7.5f &&
                                 eventPeakRms <= 0.60f &&
-                                (envelopeFeatures.tailEnergyRatio >= 0.26f || envelopeFeatures.decayHalfFrames >= 5)
+                                (envelopeFeatures.tailEnergyRatio >= 0.26f || envelopeFeatures.decayHalfFrames >= 10)
                         if (looksHardSurfaceImpact) {
                             rejectionReason =
                                 "Hard Surface Impact: D=${durationMs}ms A=${"%.2f".format(eventAttackRatio)} C=${"%.0f".format(avgCentroid)} T=${"%.2f".format(avgTilt)}"
                             Log.d("SoundDetector", "Rejected: $rejectionReason")
                             isValid = false
+                            rememberNuisanceReference(
+                                stage = "HARD_SURFACE",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
                             emitEventDiag(
                                 "HARD_SURFACE",
                                 rejectionReason,
@@ -1157,16 +2105,18 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
 
                     // Envelope-shape ringing check:
                     // Metallic/ceramic impacts often show bouncy or flat tails compared to snap/clap transients.
-                    if (isValid && eventPeakRms > 0f && eventRmsTrace.size >= 4) {
+                    if (isValid && eventPeakRms > 0f && eventRmsTrace.size >= framesForMs(40)) {
                         val isGestureControlContext = !debugContext.equals("DIAGNOSTIC", ignoreCase = true)
                         val candidateAgeMs = eventStartTimestamp - lastCandidateTimestampMs
                         val acceptedAgeMs = eventStartTimestamp - lastAcceptedTimestampMs
@@ -1200,7 +2150,7 @@ class SoundDetector @Inject constructor(
                             } else {
                                 0f
                             }
-                        val tailFrames = minOf(3, postPeak.size)
+                        val tailFrames = minOf(framesForMs(30), postPeak.size)
                         var tailSum = 0f
                         if (tailFrames > 0) {
                             for (i in postPeak.size - tailFrames until postPeak.size) {
@@ -1245,6 +2195,17 @@ class SoundDetector @Inject constructor(
                                 "Envelope Ringing: B=${"%.2f".format(bounceRatio)} T=${"%.2f".format(tailRatio)} R=${"%.2f".format(reboundFromLowRatio)}"
                             Log.d("SoundDetector", "Rejected: $rejectionReason")
                             isValid = false
+                            rememberNuisanceReference(
+                                stage = "ENVELOPE_RING",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
                             emitEventDiag(
                                 "ENVELOPE_RING",
                                 rejectionReason,
@@ -1252,31 +2213,93 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch?.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
 
                     // Metallic clinks (cutlery/keys) can look like sharp taps.
-                    // Reject bright, positively tilted transients with weaker attack.
+                    // Reject bright, positively tilted broadband impacts (glass/metal/ceramic).
                     if (isValid) {
                         val isSnapOrClapFamily =
                             bestMatch?.name?.startsWith("Snap") == true ||
                                 bestMatch?.name?.startsWith("Clap") == true ||
                                 bestMatch?.name?.startsWith("Slap") == true
-                        val looksMetallic =
+                        val metallicRingingEnvelope =
+                            envelopeFeatures.tailEnergyRatio >= 0.24f ||
+                                envelopeFeatures.bounceRatio >= 0.18f ||
+                                envelopeFeatures.decayHalfFrames >= framesForMs(45)
+                        val metallicSignatureNoRef =
                             isSnapOrClapFamily &&
-                                durationMs in 30..180 &&
-                                avgCentroid >= 4200f &&
-                                avgTilt >= 0.18f &&
-                                eventAttackRatio <= 18f
+                                metallicRingingEnvelope &&
+                                (
+                                    (
+                                        durationMs in 20..95 &&
+                                            avgCentroid >= 4100f &&
+                                            avgTilt >= 0.24f &&
+                                            avgFlatness >= 0.70f &&
+                                            avgZcr >= 0.40f
+                                        ) ||
+                                        (
+                                            durationMs in 30..160 &&
+                                                avgCentroid >= 4500f &&
+                                                avgTilt >= 0.20f &&
+                                                avgFlatness >= 0.60f &&
+                                                eventAttackRatio <= 22f
+                                        )
+                                    )
+                        val metallicSignatureWithRef =
+                            isSnapOrClapFamily &&
+                                hasRecentTapReference &&
+                                metallicRingingEnvelope &&
+                                durationMs in 25..110 &&
+                                avgCentroid >= 4700f &&
+                                avgTilt >= 0.30f &&
+                                avgFlatness >= 0.74f &&
+                                avgZcr >= 0.44f
+                        val likelySnapTransient = isLikelySnapTransient(
+                            durationMs = durationMs,
+                            avgZcr = avgZcr,
+                            avgCentroid = avgCentroid,
+                            avgTilt = avgTilt,
+                            avgFlatness = avgFlatness,
+                            attackRatio = eventAttackRatio,
+                            env = envelopeFeatures
+                        )
+                        val looksMetallic = (metallicSignatureNoRef || metallicSignatureWithRef) && !likelySnapTransient
                         if (looksMetallic) {
                             rejectionReason =
-                                "Metallic Ringing: C=${"%.0f".format(avgCentroid)} T=${"%.2f".format(avgTilt)} A=${"%.2f".format(eventAttackRatio)}"
+                                "Metallic Ringing: C=${"%.0f".format(avgCentroid)} T=${"%.2f".format(avgTilt)} F=${"%.3f".format(avgFlatness)} Z=${"%.2f".format(avgZcr)}"
                             Log.d("SoundDetector", "Rejected: $rejectionReason")
                             isValid = false
+                            val strongMetallicForMemory =
+                                (
+                                    avgCentroid >= 4400f &&
+                                        avgTilt >= 0.20f &&
+                                        avgFlatness >= 0.66f &&
+                                        avgZcr >= 0.42f
+                                    ) || (
+                                    avgTilt >= 0.30f &&
+                                        avgFlatness >= 0.74f &&
+                                        avgZcr >= 0.46f
+                                    )
+                            if (strongMetallicForMemory) {
+                                rememberNuisanceReference(
+                                    stage = "METALLIC",
+                                    durationMs = durationMs,
+                                    zcr = avgZcr,
+                                    centroid = avgCentroid,
+                                    tilt = avgTilt,
+                                    flatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    strength = eventPeakRms,
+                                    timestampMs = eventStartTimestamp
+                                )
+                            }
                             emitEventDiag(
                                 "METALLIC",
                                 rejectionReason,
@@ -1284,9 +2307,200 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
+                            )
+                        }
+                    }
+
+                    // Resonant object-contact signature reject.
+                    // Targets repeated knife/glass-like taps that can pass profile scoring.
+                    if (isValid && !hasRecentTapReference) {
+                        val isSnapOrClapFamily =
+                            bestMatch?.name?.startsWith("Snap") == true ||
+                                bestMatch?.name?.startsWith("Clap") == true ||
+                                bestMatch?.name?.startsWith("Slap") == true
+                        val resonantImpactLike =
+                            isSnapOrClapFamily &&
+                                isResonantImpactSignature(
+                                    durationMs = durationMs,
+                                    avgZcr = avgZcr,
+                                    avgCentroid = avgCentroid,
+                                    avgTilt = avgTilt,
+                                    avgFlatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    peakRms = eventPeakRms,
+                                    env = envelopeFeatures
+                                )
+                        if (resonantImpactLike) {
+                            rejectionReason =
+                                "Resonant Impact: D=${durationMs} C=${"%.0f".format(avgCentroid)} Z=${"%.2f".format(avgZcr)} T=${"%.2f".format(avgTilt)} F=${"%.3f".format(avgFlatness)}"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            rememberNuisanceReference(
+                                stage = "RESONANT_IMPACT",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
+                            emitEventDiag(
+                                "RESONANT_IMPACT",
+                                rejectionReason,
+                                overrideDurationMs = durationMs,
+                                overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid,
+                                overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
+                                bestProfileName = bestMatch?.name,
+                                bestConfidence = bestConfidence,
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
+                            )
+                        }
+                    }
+
+                    // First-tap fallback reject for bright broadband impact signatures.
+                    // This catches object contacts that still slip past profile + metallic checks.
+                    if (isValid && !hasRecentTapReference) {
+                        val isSnapOrClapFamily =
+                            bestMatch?.name?.startsWith("Snap") == true ||
+                                bestMatch?.name?.startsWith("Clap") == true ||
+                                bestMatch?.name?.startsWith("Slap") == true
+                        val brightBroadImpactLike =
+                            isSnapOrClapFamily &&
+                                durationMs in 20..120 &&
+                                avgCentroid >= 4000f &&
+                                avgTilt >= 0.10f &&
+                                avgFlatness >= 0.60f &&
+                                avgZcr >= 0.35f &&
+                                (envelopeFeatures.tailEnergyRatio >= 0.26f || envelopeFeatures.decayHalfFrames >= framesForMs(45)) &&
+                                eventAttackRatio <= 24f
+                        if (brightBroadImpactLike) {
+                            rejectionReason =
+                                "Bright Impact: C=${"%.0f".format(avgCentroid)} T=${"%.2f".format(avgTilt)} F=${"%.3f".format(avgFlatness)} Z=${"%.2f".format(avgZcr)}"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            emitEventDiag(
+                                "BRIGHT_IMPACT",
+                                rejectionReason,
+                                overrideDurationMs = durationMs,
+                                overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid,
+                                overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
+                                bestProfileName = bestMatch?.name,
+                                bestConfidence = bestConfidence,
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
+                            )
+                        }
+                    }
+
+                    // Very bright short ping reject:
+                    // catches crisp metal/glass edge contacts that can still fit Snap (High).
+                    if (isValid && !hasRecentTapReference) {
+                        val isSnapOrClapFamily =
+                            bestMatch?.name?.startsWith("Snap") == true ||
+                                bestMatch?.name?.startsWith("Clap") == true ||
+                                bestMatch?.name?.startsWith("Slap") == true
+                        val ultraBrightPingLike =
+                            isSnapOrClapFamily &&
+                                isUltraBrightPingSignature(
+                                    durationMs = durationMs,
+                                    avgZcr = avgZcr,
+                                    avgCentroid = avgCentroid,
+                                    avgTilt = avgTilt,
+                                    avgFlatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    peakRms = eventPeakRms,
+                                    env = envelopeFeatures
+                                )
+                        if (ultraBrightPingLike) {
+                            rejectionReason =
+                                "Ultra Bright Ping: D=${durationMs} C=${"%.0f".format(avgCentroid)} Z=${"%.2f".format(avgZcr)} T=${"%.2f".format(avgTilt)} F=${"%.3f".format(avgFlatness)}"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            rememberNuisanceReference(
+                                stage = "ULTRA_BRIGHT_PING",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
+                            emitEventDiag(
+                                "ULTRA_BRIGHT_PING",
+                                rejectionReason,
+                                overrideDurationMs = durationMs,
+                                overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid,
+                                overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
+                                bestProfileName = bestMatch?.name,
+                                bestConfidence = bestConfidence,
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
+                            )
+                        }
+                    }
+
+                    // Attack-shape reject for flat-side material impacts:
+                    // long bright onset with low-mid flatness and lingering envelope
+                    // (common for glass/ceramic/metal face contact).
+                    if (isValid && !hasRecentTapReference) {
+                        val isSnapOrClapFamily =
+                            bestMatch?.name?.startsWith("Snap") == true ||
+                                bestMatch?.name?.startsWith("Clap") == true ||
+                                bestMatch?.name?.startsWith("Slap") == true
+                        val glassSideAttackLike =
+                            isSnapOrClapFamily &&
+                                durationMs in 120..200 &&
+                                avgCentroid >= 3900f &&
+                                avgZcr >= 0.38f &&
+                                avgTilt >= 0.22f &&
+                                avgFlatness in 0.24f..0.50f &&
+                                eventAttackRatio >= 25f &&
+                                eventPeakRms >= 0.18f &&
+                                (envelopeFeatures.tailEnergyRatio >= 0.20f || envelopeFeatures.decayHalfFrames >= framesForMs(65))
+                        if (glassSideAttackLike) {
+                            rejectionReason =
+                                "Attack Shape Impact: D=${durationMs} C=${"%.0f".format(avgCentroid)} Z=${"%.2f".format(avgZcr)} T=${"%.2f".format(avgTilt)} F=${"%.3f".format(avgFlatness)}"
+                            Log.d("SoundDetector", "Rejected: $rejectionReason")
+                            isValid = false
+                            rememberNuisanceReference(
+                                stage = "ATTACK_SHAPE",
+                                durationMs = durationMs,
+                                zcr = avgZcr,
+                                centroid = avgCentroid,
+                                tilt = avgTilt,
+                                flatness = avgFlatness,
+                                attackRatio = eventAttackRatio,
+                                strength = eventPeakRms,
+                                timestampMs = eventStartTimestamp
+                            )
+                            emitEventDiag(
+                                "ATTACK_SHAPE",
+                                rejectionReason,
+                                overrideDurationMs = durationMs,
+                                overrideAvgZcr = avgZcr,
+                                overrideAvgCentroid = avgCentroid,
+                                overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
+                                bestProfileName = bestMatch?.name,
+                                bestConfidence = bestConfidence,
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
@@ -1309,9 +2523,9 @@ class SoundDetector @Inject constructor(
                              isValid = false
                              emitEventDiag("ARTIFACT", rejectionReason,
                                  overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
-                                 overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                 overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt, overrideAvgFlatness = avgFlatness,
                                  bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
-                                 allProfileScores = allScores)
+                                 allProfileScores = allScores, sessionSimilarity = sessionSimilarityValue)
                         } else {
                             val preEventRatio = if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f
                             
@@ -1331,9 +2545,9 @@ class SoundDetector @Inject constructor(
                                 isValid = false
                                 emitEventDiag("ISOLATION", rejectionReason,
                                     overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
-                                    overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                    overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt, overrideAvgFlatness = avgFlatness,
                                     bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
-                                    allProfileScores = allScores)
+                                    allProfileScores = allScores, sessionSimilarity = sessionSimilarityValue)
                             }
                         }
                     }
@@ -1384,8 +2598,8 @@ class SoundDetector @Inject constructor(
                             (candidateAgeMs in 20L..1000L || acceptedAgeMs in 20L..1400L)
                         val clapLikeEvent = bestMatch?.name?.startsWith("Clap") == true
                         val profileIsConfident = bestConfidence >= 0.88f
-                        val lookbackForVariance = if (isGestureControlContext) 24 else 30
-                        val gapFrames = 3
+                        val lookbackForVariance = if (isGestureControlContext) framesForMs(240) else framesForMs(300)
+                        val gapFrames = framesForMs(30)
                         val available = recentSamples.size
                         
                         // How many frames ago did the last confirmed detection end?
@@ -1405,7 +2619,7 @@ class SoundDetector @Inject constructor(
                             clapLikeEvent && profileIsConfident -> 0.56f
                             else -> 0.53f
                         }
-                        val minFramesForChaos = if (isGestureControlContext) 8 else 10
+                        val minFramesForChaos = if (isGestureControlContext) framesForMs(80) else framesForMs(100)
                         val chaosRatioThreshold = when {
                             isGestureControlContext -> 0.40f
                             clapLikeEvent && profileIsConfident -> 0.34f
@@ -1481,9 +2695,9 @@ class SoundDetector @Inject constructor(
                                 emitEventDiag("CHAOS_PRE", rejectionReason,
                                     preEventCV = spikeRatio,
                                     overrideDurationMs = durationMs, overrideAvgZcr = avgZcr,
-                                    overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt,
+                                    overrideAvgCentroid = avgCentroid, overrideAvgTilt = avgTilt, overrideAvgFlatness = avgFlatness,
                                     bestProfileName = bestMatch?.name, bestConfidence = bestConfidence,
-                                    allProfileScores = allScores)
+                                    allProfileScores = allScores, sessionSimilarity = sessionSimilarityValue)
                             }
                         }
                     }
@@ -1508,14 +2722,40 @@ class SoundDetector @Inject constructor(
                             avgZcr = avgZcr,
                             avgCentroid = avgCentroid,
                             avgTilt = avgTilt,
+                            avgFlatness = avgFlatness,
                             env = envelopeFeatures
                         )
+                        val resonantImpactLike =
+                            !hasRecentTapReference &&
+                                isResonantImpactSignature(
+                                    durationMs = durationMs,
+                                    avgZcr = avgZcr,
+                                    avgCentroid = avgCentroid,
+                                    avgTilt = avgTilt,
+                                    avgFlatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    peakRms = eventPeakRms,
+                                    env = envelopeFeatures
+                                )
+                        val ultraBrightPingLike =
+                            !hasRecentTapReference &&
+                                isUltraBrightPingSignature(
+                                    durationMs = durationMs,
+                                    avgZcr = avgZcr,
+                                    avgCentroid = avgCentroid,
+                                    avgTilt = avgTilt,
+                                    avgFlatness = avgFlatness,
+                                    attackRatio = eventAttackRatio,
+                                    peakRms = eventPeakRms,
+                                    env = envelopeFeatures
+                                )
                         val stage2Threshold = when {
-                            hasRecentTapReference && isDiagnosticContext -> 0.50f
+                            hasRecentTapReference && isDiagnosticContext -> 0.56f
                             hasRecentTapReference -> 0.56f
-                            isDiagnosticContext -> 0.54f
+                            isDiagnosticContext -> 0.60f
                             else -> 0.60f
-                        }
+                        } + (if (resonantImpactLike) 0.10f else 0f) +
+                            (if (ultraBrightPingLike) 0.10f else 0f)
                         if (stage2Score < stage2Threshold) {
                             rejectionReason =
                                 "Stage2 Reject: score ${"%.2f".format(stage2Score)} < ${"%.2f".format(stage2Threshold)}"
@@ -1528,9 +2768,11 @@ class SoundDetector @Inject constructor(
                                 overrideAvgZcr = avgZcr,
                                 overrideAvgCentroid = avgCentroid,
                                 overrideAvgTilt = avgTilt,
+                                overrideAvgFlatness = avgFlatness,
                                 bestProfileName = bestMatch?.name,
                                 bestConfidence = bestConfidence,
-                                allProfileScores = allScores
+                                allProfileScores = allScores,
+                                sessionSimilarity = sessionSimilarityValue
                             )
                         }
                     }
@@ -1538,16 +2780,17 @@ class SoundDetector @Inject constructor(
                     // Log Data for Analysis
                     val typeLog = if (isValid && bestMatch != null) "PENDING_${bestMatch.name.replace(" ", "_").uppercase()}" else "REJECTED"
                     val timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
-                    val logEntry = "$timestamp,$debugContext,$typeLog,${"%.2f".format(bestConfidence)},$durationMs,${"%.4f".format(eventPeakRms)},${"%.4f".format(eventPeakRaw)},${"%.2f".format(avgZcr)},${"%.0f".format(avgCentroid)},${"%.2f".format(avgTilt)},${"%.3f".format(if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f)}|$rejectionReason"
+                    val logEntry = "$timestamp,$debugContext,$typeLog,${"%.2f".format(bestConfidence)},$durationMs,${"%.4f".format(eventPeakRms)},${"%.4f".format(eventPeakRaw)},${"%.2f".format(avgZcr)},${"%.0f".format(avgCentroid)},${"%.2f".format(avgTilt)},${"%.3f".format(avgFlatness)},${sessionSimilarityValue?.let { "%.3f".format(it) } ?: ""},${"%.3f".format(if (eventPeakRms > 0) preEventNoiseAvg / eventPeakRms else 1f)}|$rejectionReason"
                     Log.i("SoundAnalysis", logEntry)
 
                     if (isValid && bestMatch != null) {
                         // DEFER FINAL CONFIRMATION - Wait for post-event quiet check
                         Log.d("SoundDetector", "Event passed pre-checks (${bestMatch.name}), waiting for post-event quiet...")
                         
-                        // Only copy the samples needed for visualization (last 50 frames = 500ms)
-                        val sampleSnapshot = if (recentSamples.size > 50) {
-                            recentSamples.subList(recentSamples.size - 50, recentSamples.size).toList()
+                        // Only copy samples needed for visualization (last ~500ms).
+                        val sampleWindowFrames = framesForMs(500)
+                        val sampleSnapshot = if (recentSamples.size > sampleWindowFrames) {
+                            recentSamples.subList(recentSamples.size - sampleWindowFrames, recentSamples.size).toList()
                         } else {
                             recentSamples.toList()
                         }
@@ -1560,6 +2803,8 @@ class SoundDetector @Inject constructor(
                             type = bestMatch.name,
                             centroid = avgCentroid,
                             tilt = avgTilt,
+                            zcr = avgZcr,
+                            flatness = avgFlatness,
                             confidence = bestConfidence,
                             samples = sampleSnapshot
                         )
@@ -1568,11 +2813,12 @@ class SoundDetector @Inject constructor(
                         thresholdAtEventEnd = threshold
                         postEventMaxRmsDuringCheck = 0f
                         pendingProfileScores = allScores
+                        pendingSessionSimilarity = sessionSimilarityValue
 
                         // Store a recent pre-qualified signature so a rapid second tap can
                         // bypass CHAOS_PRE if it matches the first tap profile.
                         lastQualifiedEndFrame = frameCounter
-                        lastQualifiedDurationFrames = (durationMs / windowMs) + postEventCheckFrames + 3
+                        lastQualifiedDurationFrames = framesForMs(durationMs) + postEventCheckFrames + framesForMs(30)
                         lastCandidateType = bestMatch.name
                         lastCandidateTimestampMs = eventStartTimestamp
                         lastCandidateDurationMs = durationMs
@@ -1628,7 +2874,7 @@ class SoundDetector @Inject constructor(
                                 // Record when this detection ended so the chaos gate
                                 // can skip these frames for the next event
                                 lastDetectionEndFrame = frameCounter
-                                lastDetectionDurationFrames = (pending.durationMs / windowMs) + postEventCheckFrames + 3 // event + post-check + margin
+                                lastDetectionDurationFrames = framesForMs(pending.durationMs) + postEventCheckFrames + framesForMs(30) // event + post-check + margin
                                 lastAcceptedType = pending.type
                                 lastAcceptedTimestampMs = pending.timestampMs
                                 lastAcceptedDurationMs = pending.durationMs
@@ -1650,7 +2896,8 @@ class SoundDetector @Inject constructor(
                                     sustainRatio = null, decayRatio = null, peakFrameIndex = 0,
                                     postEventRms = postEventMaxRmsDuringCheck,
                                     postEventQuietThreshold = thresholdAtEventEnd * postEventQuietRatio,
-                                    avgZcr = 0f, avgCentroid = pending.centroid, avgTilt = pending.tilt,
+                                    avgZcr = pending.zcr, avgCentroid = pending.centroid, avgTilt = pending.tilt, avgFlatness = pending.flatness,
+                                    sessionSimilarity = pendingSessionSimilarity,
                                     bestProfileName = pending.type, bestConfidence = pending.confidence,
                                     allProfileScores = savedScores
                                 ))
@@ -1686,6 +2933,19 @@ class SoundDetector @Inject constructor(
                                     "Post-Event Ringing: ratio ${"%.2f".format(postPeakRatio)} > ${"%.2f".format(allowedPostPeakRatio)}"
                                 }
                                 Log.d("SoundDetector", "Rejected: $postRejectReason")
+                                if (!isPostRingClean) {
+                                    rememberNuisanceReference(
+                                        stage = "CHAOS_POST_RING",
+                                        durationMs = pending.durationMs,
+                                        zcr = pending.zcr,
+                                        centroid = pending.centroid,
+                                        tilt = pending.tilt,
+                                        flatness = pending.flatness,
+                                        attackRatio = eventAttackRatio,
+                                        strength = pending.strength,
+                                        timestampMs = pending.timestampMs
+                                    )
+                                }
                                 
                                 // Emit post-event rejection diagnostic
                                 val savedScores = pendingProfileScores
@@ -1701,7 +2961,8 @@ class SoundDetector @Inject constructor(
                                     sustainRatio = null, decayRatio = null, peakFrameIndex = 0,
                                     postEventRms = postEventMaxRmsDuringCheck,
                                     postEventQuietThreshold = thresholdAtEventEnd * postEventQuietRatio,
-                                    avgZcr = 0f, avgCentroid = pending.centroid, avgTilt = pending.tilt,
+                                    avgZcr = pending.zcr, avgCentroid = pending.centroid, avgTilt = pending.tilt, avgFlatness = pending.flatness,
+                                    sessionSimilarity = pendingSessionSimilarity,
                                     bestProfileName = pending.type, bestConfidence = pending.confidence,
                                     allProfileScores = savedScores
                                 ))
@@ -1733,6 +2994,7 @@ class SoundDetector @Inject constructor(
                         pendingEventLogEntry = null
                         postEventMaxRmsDuringCheck = 0f
                         pendingProfileScores = emptyList()
+                        pendingSessionSimilarity = null
                     }
                 }
                 
@@ -1755,13 +3017,48 @@ class SoundDetector @Inject constructor(
                     val riseRatio = rmsF / baseline.coerceAtLeast(0.001f) // Use full RMS for attack ratio to capture full onset
                     
                     if (riseRatio > attackThreshold) {
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val sinceLastPlaybackMs = nowMs - sfxPlayer.lastPlaybackTimestampMs()
+                        if (sinceLastPlaybackMs in 0L..playbackBlankingMs) {
+                            if (nowMs - lastPlaybackBlankDiagMs >= playbackBlankDiagCooldownMs) {
+                                lastPlaybackBlankDiagMs = nowMs
+                                emitDiagnostic(
+                                    DetectionDiagnostic(
+                                        id = nowMs,
+                                        timestamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()),
+                                        eventTimestampMs = nowMs,
+                                        outcome = "REJECTED",
+                                        rejectedAt = "PLAYBACK_BLANK",
+                                        rejectionDetail = "Suppressed ${sinceLastPlaybackMs}ms after app playback",
+                                        noiseFloor = noiseFloor,
+                                        threshold = threshold,
+                                        preEventNoiseAvg = preEventNoiseAvg,
+                                        triggerRms = rmsF,
+                                        attackRatio = riseRatio,
+                                        durationMs = 0,
+                                        peakRms = rmsF,
+                                        peakRaw = peakNorm.toFloat(),
+                                        sustainRatio = null,
+                                        decayRatio = null,
+                                        peakFrameIndex = 0,
+                                        avgZcr = zcr,
+                                        avgCentroid = centroid,
+                                        avgTilt = tilt,
+                                        avgFlatness = flatness
+                                    )
+                                )
+                            }
+                            continue
+                        }
+
                          // Start Monitoring
                         isMonitoringEvent = true
-                        eventStartTimestamp = SystemClock.elapsedRealtime()
+                        eventStartTimestamp = nowMs
                         eventHighRmsFrames = 1
                         eventAccumulatedZcr = zcr
                         eventAccumulatedCentroid = centroid // Reset Accumulator!
                         eventAccumulatedTilt = tilt
+                        eventAccumulatedFlatness = flatness
                         eventPeakRms = rmsF
                         eventPeakRaw = peakNorm.toFloat()
                         framesSincePeak = 0
@@ -1776,11 +3073,11 @@ class SoundDetector @Inject constructor(
                         // Capture pre-event noise level
                         // Reverted deep lookback to 120ms to keep it snappy.
                         // We will rely on stricter spectral profiling (Tilt/Centroid) to kill speech.
-                        val lookback = 12
+                        val lookback = framesForMs(120)
                         val available = recentSamples.size
                         
-                        // We skip the immediate 3 frames (30ms) before the event to ignore the "Silence before the Storm"
-                        val gapFrames = 3 
+                        // Skip the immediate pre-trigger window to ignore local onset dip.
+                        val gapFrames = framesForMs(30)
                         
                         var noiseSum = 0f
                         var count = 0
