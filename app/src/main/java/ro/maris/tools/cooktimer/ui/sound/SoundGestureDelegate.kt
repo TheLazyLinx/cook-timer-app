@@ -206,17 +206,25 @@ class SoundGestureDelegate(
     // ---- gesture filtering ----
 
     companion object {
+        // Unified confidence floor for all impulse families (Snap/Clap/Slap).
+        // Using a single threshold prevents classification jitter between
+        // near-identical profiles from breaking tap grouping.
+        private const val MIN_IMPULSE_CONFIDENCE = 0.82f
+
         fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {
             if (!isFreeGestureProfile(event.type)) return false
+            if (event.type == "Snap (Low)") return false
+            if (event.confidence < MIN_IMPULSE_CONFIDENCE) return false
+
             val family = event.type.substringBefore(" (").trim()
             return when (family) {
                 "Snap" -> {
-                    if (event.type == "Snap (Low)") return false
-                    if (event.confidence < 0.84f) return false
-                    !(event.centroid < 3300f && event.tilt <= -0.22f)
+                    // Reject only events that are clearly non-impulsive:
+                    // very low centroid AND strongly negative tilt together
+                    // indicate a dull thud rather than a snap/clap.
+                    !(event.centroid < 2800f && event.tilt <= -0.45f)
                 }
                 "Clap", "Slap" -> {
-                    if (event.confidence < 0.82f) return false
                     val obviousObjectContact =
                         event.durationMs <= 55 &&
                             event.centroid <= 2900f &&
