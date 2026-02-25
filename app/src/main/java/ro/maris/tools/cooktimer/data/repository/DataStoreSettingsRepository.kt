@@ -42,6 +42,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val SOUND_EFFECTS_ENABLED = booleanPreferencesKey("sound_effects_enabled")
         val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val SOUND_DETECTION_ENABLED = booleanPreferencesKey("sound_detection_enabled")
+        /** Legacy key — migrated to [DOUBLE_TAP_ACTION]. Kept for one-time read-migration only. */
         val SOUND_TRIGGER_ACTION = stringPreferencesKey("sound_trigger_action")
         val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
         val TRIPLE_TAP_ACTION = stringPreferencesKey("triple_tap_action")

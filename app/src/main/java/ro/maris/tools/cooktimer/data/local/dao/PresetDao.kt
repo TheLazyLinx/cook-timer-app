@@ -30,4 +30,7 @@ interface PresetDao {
 
     @Query("DELETE FROM presets WHERE id = :presetId")
     suspend fun deletePresetById(presetId: String)
+
+    @Query("SELECT COUNT(*) FROM presets WHERE isBuiltIn = 1")
+    suspend fun countBuiltIns(): Int
 }

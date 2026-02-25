@@ -63,6 +63,7 @@ class SoundDetector @Inject constructor(
     private val _state = MutableStateFlow(SoundDetectorState())
     val state: StateFlow<SoundDetectorState> = _state
     
+    @Volatile
     var debugContext: String = "Unknown" 
 
     private val sampleRate = 16000
@@ -538,6 +539,7 @@ class SoundDetector @Inject constructor(
         // History for UI and Analysis
         val recentSamples = mutableListOf<Float>() 
         val maxRecentSamples = 150 // Increased to 1.5s history to Bridge Speech Gaps
+        var lastUiEmitMs = 0L
         
         // Event Monitoring State
         var isMonitoringEvent = false
@@ -1808,8 +1810,13 @@ class SoundDetector @Inject constructor(
             }
             frameCounter++
 
-            _state.update { current ->
-                current.copy(rms = rmsF, noiseFloor = noiseFloor, currentRms = rmsF)
+            // Throttle UI-state emissions to ~10 fps (every 100ms) instead of every 10ms frame
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - lastUiEmitMs >= 100L) {
+                lastUiEmitMs = nowMs
+                _state.update { current ->
+                    current.copy(rms = rmsF, noiseFloor = noiseFloor, currentRms = rmsF)
+                }
             }
         } 
         } finally {

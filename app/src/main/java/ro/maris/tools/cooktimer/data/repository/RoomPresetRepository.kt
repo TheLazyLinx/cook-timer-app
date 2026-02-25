@@ -37,7 +37,9 @@ class RoomPresetRepository @Inject constructor(
 
     override suspend fun savePreset(preset: Preset) {
         val nowEpochSec = timeProvider.nowEpochSec()
-        val presetEntity = preset.toEntity(nowEpochSec)
+        val existing = presetDao.getPresetById(preset.id)
+        val createdAt = existing?.createdAtEpochSec ?: nowEpochSec
+        val presetEntity = preset.toEntity(createdAt = createdAt, updatedAt = nowEpochSec)
         val steps = preset.toStepEntities()
         database.withTransaction {
             presetDao.upsertPreset(presetEntity)
@@ -49,11 +51,12 @@ class RoomPresetRepository @Inject constructor(
     }
 
     override suspend fun seedBuiltInsIfEmpty() {
+        if (presetDao.countBuiltIns() > 0) return
         val nowEpochSec = timeProvider.nowEpochSec()
         val builtIns = builtInPresets()
         database.withTransaction {
             builtIns.forEach { preset ->
-                presetDao.upsertPreset(preset.toEntity(nowEpochSec))
+                presetDao.upsertPreset(preset.toEntity(createdAt = nowEpochSec, updatedAt = nowEpochSec))
                 stepDao.deleteStepsForPreset(preset.id)
                 stepDao.upsertSteps(preset.toStepEntities())
             }
@@ -89,13 +92,13 @@ class RoomPresetRepository @Inject constructor(
         )
     }
 
-    private fun Preset.toEntity(nowEpochSec: Long): PresetEntity {
+    private fun Preset.toEntity(createdAt: Long, updatedAt: Long): PresetEntity {
         return PresetEntity(
             id = id,
             name = name,
             isBuiltIn = isBuiltIn,
-            createdAtEpochSec = nowEpochSec,
-            updatedAtEpochSec = nowEpochSec
+            createdAtEpochSec = createdAt,
+            updatedAtEpochSec = updatedAt
         )
     }
 

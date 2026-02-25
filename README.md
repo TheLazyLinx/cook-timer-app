@@ -19,18 +19,19 @@ CookTimer2 is a simple, reliable cooking timer that focuses on **processes**, no
   - Gate steps (wait until ready, no timer)
   - Auto or manual start modes per step
   - Optional notes for each step
-- **Timer Engine**: State machine-based timer with start/pause/resume/next/back controls
-- **Sound Gesture Control**: Optional hands-free snap/clap detection for timer control. Supports safe multi-screen usage with fixed free-mode gesture behavior:
+- **Timer Engine**: State machine-based timer with start/pause/resume/next/back controls. Uses atomic CAS state updates and mutex-protected ticker for thread safety.
+- **Sound Gesture Control**: Optional hands-free snap/clap detection for timer control. Uses a shared `SoundGestureDelegate` for consistent behavior across all run screens:
   - Double tap: Start / Pause / Resume
-  - Triple tap: Stopwatch = Lap, Preset Run = Parse
+  - Triple tap: Stopwatch = Lap, Preset Run = Parse (next step), Quick Timer = reserved
   - Action routing uses an additional quality filter before gesture grouping to reduce kitchen false positives
 - **Haptic Feedback**:
   - Vibration confirmation for state transitions (user actions, timer completion, step changes)
   - "Clock Tick" feedback for valid sound triggers
   - Virtual key feedback for "Lap" and "Picker" interactions.
 - **Dark/Light Theme**: System-aware theming with manual override
-- **Local Storage**: Room database for persistent preset storage
+- **Local Storage**: Room database for persistent preset storage with schema export
 - **Built-in Presets**: Pre-configured templates that can be copied and customized
+- **In-App Billing**: Premium unlock via Google Play Billing (mutex-protected connection lifecycle)
 
 ## Architecture
 
@@ -45,26 +46,28 @@ app/src/main/java/ro/maris/tools/cooktimer/
 ├── domain/
 │   ├── model/              # Core data models (Preset, Step, RunState, Phase)
 │   ├── engine/             # Timer engine with reducer pattern (TimerEngine, TimerReducer)
-│   └── repository/         # Repository interface (PresetRepository)
+│   └── repository/         # Repository interfaces (PresetRepository, SettingsRepository)
 ├── data/
 │   ├── local/
-│   │   ├── db/            # Room database (AppDatabase)
+│   │   ├── db/            # Room database (AppDatabase, schema export enabled)
 │   │   ├── dao/           # Data access objects (PresetDao, StepDao)
 │   │   └── entity/        # Room entities (PresetEntity, StepEntity)
-│   └── repository/        # Repository implementation (RoomPresetRepository)
+│   └── repository/        # Repository implementations (RoomPresetRepository, DataStoreSettingsRepository, PlayBillingRepository)
 ├── ui/
-│   ├── main/              # Main scaffold with Bottom Navigation
+│   ├── main/              # Main scaffold with Bottom Navigation (MainScreen)
 │   ├── presets/           # Presets list screen and ViewModel
 │   ├── edit/              # Preset editor screen and ViewModel
 │   ├── run/               # Preset execution screen and ViewModel
 │   ├── timer/             # Quick Timer screen and ViewModel
 │   ├── stopwatch/         # Stopwatch screen and ViewModel
 │   ├── settings/          # Settings screen and ViewModel
-│   ├── sound/             # Sound test components
-│   │   ├── haptics/       # Vibration helper and implementation
+│   ├── sound/             # Sound gesture delegate, tap recognizer, diagnostics screen
+│   ├── soundwave/         # Sound waveform display components
+│   ├── haptics/           # Vibration helper and implementation
+│   ├── common/            # Shared UI utilities
 │   ├── theme/             # Material3 theming (Color, Type, Theme)
 │   └── navigation/        # Navigation setup (AppNavHost, Routes)
-├── audio/                 # Sound effects player and detector (Reference Counting)
+├── audio/                 # Sound effects player (SfxPlayer) and detector (SoundDetector)
 └── di/                    # Dependency injection modules (Hilt)
 ```
 
@@ -74,10 +77,12 @@ app/src/main/java/ro/maris/tools/cooktimer/
 - **Architecture**: MVVM with ViewModels and StateFlow
 - **Dependency Injection**: Hilt/Dagger
 - **Navigation**: Jetpack Navigation Compose (Tab-based)
-- **Database**: Room with SQLite
-- **Audio**: AudioRecord (Singleton with Ref-Counting), SoundPool
+- **Database**: Room with SQLite (schema export enabled)
+- **Preferences**: Jetpack DataStore
+- **Billing**: Google Play Billing Library
+- **Audio**: AudioRecord (singleton with ref-counting), SoundPool
 - **Haptics**: Android VibrationEffect and VibratorManager
-- **Build**: Gradle with Kotlin DSL, KSP for annotation processing
+- **Build**: Gradle with Kotlin DSL, KSP for annotation processing, R8 minification enabled for release
 
 ## Key Components
 
@@ -85,15 +90,23 @@ app/src/main/java/ro/maris/tools/cooktimer/
 
 - **Preset**: Reusable timing flow with ordered steps
 - **Step**: Individual stage with duration, start mode, and optional notes
-- **RunState**: Ephemeral timer state tracking current step, phase, time, and **laps**.
+- **RunState**: Ephemeral timer state tracking current step, phase, epoch-based timing, stopwatch accumulation, and laps
 - **Phase**: Timer state enum (READY, RUNNING, PAUSED, COMPLETED)
 
 ### Timer Engine
 
 State machine-based engine using a reducer pattern:
 - Processes actions (Tick, Start, Pause, Resume, Next, Back, Lap, etc.)
-- Maintains immutable state transitions
-- Handles step progression and auto-start logic
+- Maintains immutable state transitions via atomic CAS updates
+- Handles step progression and auto-start logic (iterative, not recursive)
+- Ticker coroutine protected by mutex for safe start/stop
+
+### Sound Gesture Delegate
+
+Shared composition delegate (`SoundGestureDelegate`) encapsulating sound-gesture detection logic used by RunViewModel, TimerViewModel, and StopwatchViewModel:
+- Observes sound detector events, settings changes, and billing state
+- Routes accepted events through quality filtering and tap gesture recognition
+- Each screen provides its own `onSoundTrigger` callback for screen-specific behavior
 
 ### UI Screen Structure
 
@@ -127,7 +140,10 @@ Or open in Android Studio and run directly.
 
 ## Design Documents
 
-- [MVP_DESIGN.md](MVP_DESIGN.md) – Detailed product/design specifications for the MVP
+- [MVP_DESIGN.md](MVP_DESIGN.md) – Product and design specifications for the MVP
+- [SOUND_DETECTION.md](SOUND_DETECTION.md) – Sound detection pipeline and tuning guide
+- [LOG_ANALYSIS.md](LOG_ANALYSIS.md) – Diagnostics CSV format and gesture failure analysis
+- [UI_DESIGN.md](UI_DESIGN.md) – Retro-futuristic industrial UI design system
 - [AGENT.md](AGENT.md) – Development agent instructions
 
 ## Permissions

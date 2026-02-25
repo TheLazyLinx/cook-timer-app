@@ -74,14 +74,16 @@ Lap {
 ``` ts
 RunState {
   presetId: string
+  presetName: string
   activeStepIndex: number
   phase: "ready" | "running" | "paused" | "completed"
-  remainingSec: number
-  totalDurationMs: number // Stopwatch elapsed
-  laps: Lap[] // Stopwatch laps
-  startedAtEpoch?: number
-  micListening: boolean
-  lastSoundTriggerEpoch: number
+  endsAtEpochSec: number | null
+  pausedAtEpochSec: number | null
+  stopwatchStartedAtEpochSec: number | null
+  stopwatchAccumulatedSec: number
+  laps: Lap[]
+  stepCompleted: boolean
+  nowEpochSec: number
 }
 ```
 
@@ -208,30 +210,42 @@ running → completed   (Last step ends)
 
 ------------------------------------------------------------------------
 
-## Sound Gesture MVP (Slap / Knock)
+## Sound Gesture MVP (Snap / Clap)
 
 ### Description
 
-Detect a short, high-energy impulse sound to control the app hands-free.
+Detect short, high-energy impulse sounds (snaps, claps) to control the
+app hands-free. Uses a physics-first transient detector with spectral
+profile matching.
+
+See [SOUND_DETECTION.md](SOUND_DETECTION.md) for full pipeline details.
 
 ------------------------------------------------------------------------
 
 ### Rules
 
 -   Global opt-in only
--   Visible listening indicator
--   Cooldown to prevent repeated triggers
--   **Always requires user confirmation** in MVP
+-   Visible listening indicator (dual-arc retro display)
+-   Duplicate suppression (<90ms) and gesture grouping windows
+-   Action-quality filter applied per-screen before gesture routing
 
 ------------------------------------------------------------------------
 
-### Gesture Actions (Context-Aware)
+### Gesture Actions (Fixed Free-Mode Mapping)
 
--   If phase = `ready` → "Start step?"
--   If phase = `running` → "Next step?"
--   If phase = `paused` → "Resume?"
+-   **Double tap**: Toggle Start / Pause / Resume (all screens)
+-   **Triple tap**:
+    -   Stopwatch → Lap
+    -   Preset Run → Parse (advance to next step)
+    -   Quick Timer → reserved (no-op)
 
-Only one gesture type exists in MVP.
+Gesture grouping is handled by `SoundTapGestureRecognizer`:
+-   Tap window: 1200ms
+-   Duplicate suppression: <90ms
+-   Triple grace after double: 800ms
+
+Shared behavior is encapsulated in `SoundGestureDelegate`, used by all
+run-screen ViewModels.
 
 ------------------------------------------------------------------------
 
@@ -259,12 +273,12 @@ Only one gesture type exists in MVP.
 
 ## MVP Acceptance Criteria
 
-The MVP is complete when: - A free user can create, rename, and run
-**one** custom preset end-to-end. - Manual (Wait) steps prevent
-real-world timing drift. - Timers run reliably in background with
-notifications. - Slap/knock gesture works with confirmation and does not
-trigger silently. - Premium unlock only affects preset count, not timer
-behavior.
+The MVP is complete when:
+- A free user can create, rename, and run **one** custom preset end-to-end.
+- Manual (Wait) steps prevent real-world timing drift.
+- Timers run reliably in background with notifications.
+- Snap/clap gesture detection works in free-mode with double/triple tap grouping.
+- Premium unlock only affects preset count, not timer behavior.
 
 ------------------------------------------------------------------------
 

@@ -4,18 +4,13 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import ro.maris.tools.cooktimer.audio.SoundDetector
-import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
 import ro.maris.tools.cooktimer.audio.SfxPlayer
-import ro.maris.tools.cooktimer.audio.SfxId
+import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
 import ro.maris.tools.cooktimer.domain.model.Phase
@@ -28,7 +23,7 @@ import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
-import ro.maris.tools.cooktimer.ui.sound.SoundTapGestureRecognizer
+import ro.maris.tools.cooktimer.ui.sound.SoundGestureDelegate
 import javax.inject.Inject
 import java.util.UUID
 
@@ -43,9 +38,6 @@ class TimerViewModel @Inject constructor(
     private val sfxPlayer: SfxPlayer,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
-
-    private var lastRejectionReason: String? = null
-    private var lastHandledDetectionCount = 0
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -62,55 +54,28 @@ class TimerViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = false
         )
-    private val _isScreenVisible = MutableStateFlow(false)
 
-    // Removed presetId dependency
-
-    private data class GestureMapping(
-        val doubleTapAction: SoundTriggerAction,
-        val tripleTapAction: SoundTriggerAction
+    private val gestureDelegate = SoundGestureDelegate(
+        scope = viewModelScope,
+        soundDetector = soundDetector,
+        settingsRepository = settingsRepository,
+        billingRepository = billingRepository,
+        sfxPlayer = sfxPlayer,
+        vibrationHelper = vibrationHelper,
+        engineState = engine.state,
+        defaultDoubleTapAction = SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+        defaultTripleTapAction = SoundTriggerAction.PARSE,
+        consumerIdPrefix = "TimerViewModel",
+        debugContextProvider = { "Timer" },
+        onSoundTrigger = ::handleSoundTrigger
     )
 
-    private val defaultGestureMapping = GestureMapping(
-        doubleTapAction = SoundTriggerAction.TOGGLE_PLAY_PAUSE,
-        tripleTapAction = SoundTriggerAction.PARSE
-    )
-
-    private val gestureMapping = MutableStateFlow(defaultGestureMapping)
-
-    private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
-        tapCount.tapTimestamps.forEachIndexed { index, timestampMs ->
-            soundDetector.annotateGestureForEvent(
-                eventTimestampMs = timestampMs,
-                groupId = tapCount.groupId,
-                tapIndex = index + 1,
-                tapCount = tapCount.tapCount,
-                unpairedReason = tapCount.unpairedReason
-            )
-        }
-        val handled = when {
-            tapCount.tapCount >= 3 -> handleSoundTrigger(gestureMapping.value.tripleTapAction)
-            tapCount.tapCount >= 2 -> handleSoundTrigger(gestureMapping.value.doubleTapAction)
-            else -> false
-        }
-        if (handled) {
-            sfxPlayer.play(SfxId.DetectionSuccess)
-        }
-    }
-
-    fun onVisibilityChange(visible: Boolean) {
-        _isScreenVisible.value = visible
-        if (!visible) {
-            tapRecognizer.clear()
-            lastHandledDetectionCount = soundDetector.state.value.count
-        }
-    }
+    fun onVisibilityChange(visible: Boolean) = gestureDelegate.onVisibilityChange(visible)
 
     fun setDuration(seconds: Int) {
         val currentPreset = state.value ?: return
         val currentStep = currentPreset.steps.firstOrNull() ?: return
         if (currentStep.durationSec == seconds) return
-        // Create a new preset with updated duration
         val newStep = currentStep.copy(durationSec = seconds)
         val newPreset = Preset(
             id = currentPreset.presetId,
@@ -130,7 +95,6 @@ class TimerViewModel @Inject constructor(
 
     fun lap() {
         vibrationHelper.vibrateVirtualKey()
-        // Wiring for future lap logic
     }
 
     fun markHelpAsShown() {
@@ -139,10 +103,7 @@ class TimerViewModel @Inject constructor(
         }
     }
 
-    private val consumerId = "TimerViewModel-${UUID.randomUUID()}"
-
     init {
-        // Initialize with default Timer Preset (00:00:00)
         val defaultTimerPreset = Preset(
             id = UUID.randomUUID().toString(),
             name = "Timer",
@@ -158,96 +119,12 @@ class TimerViewModel @Inject constructor(
         )
         engine.loadPreset(defaultTimerPreset)
         soundDetector.debugContext = "Timer"
-
-        // Monitor settings to start/stop detection efficiently
-        viewModelScope.launch {
-            combine(
-                settingsRepository.observeSettings(),
-                _isScreenVisible
-            ) { settings, visible ->
-                Pair(settings, visible)
-            }.collectLatest { (settings, visible) ->
-                if (settings.soundDetectionEnabled && visible) {
-                    soundDetector.start(consumerId)
-                    soundDetector.debugContext = "Timer"
-                } else {
-                    soundDetector.stop(consumerId)
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            combine(
-                settingsRepository.observeSettings(),
-                billingRepository.entitlement
-            ) { settings, entitlement ->
-                if (entitlement.isPremium) {
-                    GestureMapping(
-                        doubleTapAction = settings.doubleTapAction,
-                        tripleTapAction = settings.tripleTapAction
-                    )
-                } else {
-                    defaultGestureMapping
-                }
-            }.collectLatest { mapping ->
-                gestureMapping.value = mapping
-            }
-        }
-
-        // Observe events and feedback
-        viewModelScope.launch {
-            combine(
-                settingsRepository.observeSettings(),
-                soundDetector.state,
-                _isScreenVisible
-            ) { settings, detectorState, isVisible ->
-                Triple(settings, detectorState, isVisible)
-            }.collectLatest { (settings, detectorState, isVisible) ->                
-                // Play failure sound if rejection reason changed
-                if (detectorState.lastRejectionReason != null &&
-                    detectorState.lastRejectionReason != lastRejectionReason) {
-                    if (isVisible && settings.soundDetectionEnabled) {
-                        sfxPlayer.play(SfxId.DetectionFailed)
-                    }
-                }
-                lastRejectionReason = detectorState.lastRejectionReason
-                if (detectorState.count < lastHandledDetectionCount) {
-                    lastHandledDetectionCount = detectorState.count
-                }
-
-                // Handle all newly accepted detections, not just the latest one.
-                if (isVisible && settings.soundDetectionEnabled) {
-                    val newCount = (detectorState.count - lastHandledDetectionCount).coerceAtLeast(0)
-                    if (newCount > 0) {
-                        detectorState.events
-                            .take(newCount)
-                            .asReversed()
-                            .forEach { event ->
-                                if (isActionableFreeGestureEvent(event)) {
-                                    tapRecognizer.onTap(event.timestampMs)
-                                }
-                            }
-                        lastHandledDetectionCount = detectorState.count
-                    }
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            var lastState: RunState? = null
-            engine.state.collect { currentState ->
-                if (lastState != null && currentState != null) {
-                    val phaseChanged = currentState.phase != lastState?.phase
-                    val stepChanged = currentState.activeStepIndex != lastState?.activeStepIndex
-                    if (phaseChanged || stepChanged) {
-                        vibrationHelper.vibrateConfirm()
-                    }
-                }
-                lastState = currentState
-            }
-        }
+        gestureDelegate.startObserving()
     }
 
+    /**
+     * Quick Timer screen: PARSE is a no-op (reserved for future voice/command parsing).
+     */
     private fun handleSoundTrigger(action: SoundTriggerAction): Boolean {
         val currentState = state.value ?: return false
         val hasPositiveDuration = (currentState.activeStep?.durationSec ?: 0) > 0
@@ -261,7 +138,6 @@ class TimerViewModel @Inject constructor(
 
         when (action) {
             SoundTriggerAction.NONE -> {
-                // Do nothing
                 return false
             }
             SoundTriggerAction.START_RESUME -> {
@@ -276,8 +152,6 @@ class TimerViewModel @Inject constructor(
                         vibrationHelper.vibrateTick()
                         return true
                     }
-                    // Backward-compatibility: old START_RESUME configs should still
-                    // honor the newer double-tap toggle behavior while running.
                     Phase.RUNNING -> {
                         pause()
                         vibrationHelper.vibrateTick()
@@ -324,48 +198,15 @@ class TimerViewModel @Inject constructor(
                 }
             }
             SoundTriggerAction.PARSE -> {
-                // Future integration for Voice/Command parsing
+                // No-op: reserved for future voice/command parsing
                 return false
             }
         }
         return false
     }
 
-    private fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {
-        if (!isFreeGestureProfile(event.type)) return false
-        val family = event.type.substringBefore(" (").trim()
-        return when (family) {
-            "Snap" -> {
-                if (event.type == "Snap (Low)") return false
-                if (event.confidence < 0.84f) return false
-                !(event.centroid < 3300f && event.tilt <= -0.22f)
-            }
-            "Clap", "Slap" -> {
-                if (event.confidence < 0.82f) return false
-                val obviousObjectContact =
-                    event.durationMs <= 55 &&
-                        event.centroid <= 2900f &&
-                        event.tilt <= -0.55f
-                val lowBandThudLike =
-                    event.centroid < 2400f &&
-                        event.tilt <= -0.80f
-                if (obviousObjectContact || lowBandThudLike) return false
-                true
-            }
-            else -> false
-        }
-    }
-
-    private fun isFreeGestureProfile(type: String): Boolean {
-        return when (type.substringBefore(" (").trim()) {
-            "Snap", "Clap", "Slap" -> true
-            else -> false
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
-        tapRecognizer.clear()
-        soundDetector.stop(consumerId)
+        gestureDelegate.clear()
     }
 }

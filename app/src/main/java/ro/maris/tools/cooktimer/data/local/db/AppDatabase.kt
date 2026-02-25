@@ -12,7 +12,7 @@ import ro.maris.tools.cooktimer.data.local.entity.StepEntity
 @Database(
     entities = [PresetEntity::class, StepEntity::class],
     version = 1,
-    exportSchema = false
+    exportSchema = true
 )
 @TypeConverters(DbConverters::class)
 abstract class AppDatabase : RoomDatabase() {
