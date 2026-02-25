@@ -53,7 +53,7 @@ data class RunState(
 
         fun initialFromSteps(presetId: String, presetName: String, steps: List<Step>, nowEpochSec: Long): RunState {
             require(steps.isNotEmpty()) { "Preset must have at least one step" }
-            val entry = Entry(Phase.READY, endsAtEpochSec = null)
+            val entry = entryFor(steps.first(), nowEpochSec)
             return RunState(
                 presetId = presetId,
                 presetName = presetName,

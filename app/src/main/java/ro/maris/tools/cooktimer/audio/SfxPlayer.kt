@@ -63,6 +63,7 @@ class SfxPlayer @Inject constructor(
         var currentVolume: Float
     )
     private val activeStreams = mutableListOf<StreamInfo>()
+    private val streamsLock = Any()
 
     init {
         scope.launch {
@@ -79,32 +80,28 @@ class SfxPlayer @Inject constructor(
         // Anti-spam global throttle (very short)
         if (now - lastPlayAtMs < 30L) return
 
-        // 1. Cleanup expired streams
-        activeStreams.removeAll { it.endTimeMs <= now }
+        synchronized(streamsLock) {
+            // 1. Cleanup expired streams
+            activeStreams.removeAll { it.endTimeMs <= now }
 
-        // 2. Handle same-sound cutoff (spamming logic)
-        // If the same sound is already playing, stop it.
-        val sameSoundStreams = activeStreams.filter { it.sfxId == sfx }
-        sameSoundStreams.forEach { stream ->
-            soundPool.stop(stream.streamId)
-            activeStreams.remove(stream)
-        }
-
-        // 3. Handle different-sound overlap (ducking/fading)
-        // If other sounds are active, fade them out to prioritize the new one.
-        activeStreams.forEach { stream ->
-            if (stream.sfxId != sfx) {
-                // Duck logic: reduce volume to 30% of current
-                val newVol = stream.currentVolume * 0.3f
-                soundPool.setVolume(stream.streamId, newVol, newVol)
-                stream.currentVolume = newVol
+            // 2. Handle same-sound cutoff (spamming logic)
+            // If the same sound is already playing, stop it.
+            val sameSoundStreams = activeStreams.filter { it.sfxId == sfx }
+            sameSoundStreams.forEach { stream ->
+                soundPool.stop(stream.streamId)
+                activeStreams.remove(stream)
             }
-        }
 
-        // 4. Simultaneous trigger logic (Clipping prevention)
-        // If another sound started very recently (< 50ms), reduce both volumes slightly
-        val recentStart = activeStreams.any { now - it.startTimeMs < 50L }
-        val finalVolume = if (recentStart) sfx.volume * 0.7f else sfx.volume
+            // 3. Handle different-sound overlap (ducking/fading)
+            // If other sounds are active, fade them out to prioritize the new one.
+            activeStreams.forEach { stream ->
+                if (stream.sfxId != sfx) {
+                    // Duck logic: reduce volume to 30% of current
+                    val newVol = stream.currentVolume * 0.3f
+                    soundPool.setVolume(stream.streamId, newVol, newVol)
+                    stream.currentVolume = newVol
+                }
+            }
 
         // Play
         lastPlayAtMs = now
@@ -123,7 +120,7 @@ class SfxPlayer @Inject constructor(
                     endTimeMs = now + sfx.durationMs,
                     currentVolume = finalVolume
                 )
-            )
+            }
         }
     }
 

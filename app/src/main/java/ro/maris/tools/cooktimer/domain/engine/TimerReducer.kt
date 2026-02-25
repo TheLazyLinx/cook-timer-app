@@ -141,39 +141,52 @@ object TimerReducer {
     }
 
     private fun onNext(state: RunState): RunState {
-        val step = state.activeStep ?: return state
-        if (step.durationSec == null && state.isStopwatchRunning) {
-            val startedAt = state.stopwatchStartedAtEpochSec
-            val elapsed = if (startedAt != null) {
-                (state.nowEpochSec - startedAt).toInt().coerceAtLeast(0)
-            } else {
-                0
+        var current = state
+        while (true) {
+            val step = current.activeStep ?: return current
+            if (step.durationSec == null && current.isStopwatchRunning) {
+                val startedAt = current.stopwatchStartedAtEpochSec
+                val elapsed = if (startedAt != null) {
+                    (current.nowEpochSec - startedAt).toInt().coerceAtLeast(0)
+                } else {
+                    0
+                }
+                val accumulated = current.stopwatchAccumulatedSec + elapsed
+                if (step.startMode == StartMode.MANUAL) {
+                    return current.copy(
+                        phase = Phase.READY,
+                        endsAtEpochSec = null,
+                        pausedAtEpochSec = null,
+                        stopwatchStartedAtEpochSec = null,
+                        stopwatchAccumulatedSec = accumulated,
+                        stepCompleted = true
+                    )
+                } else {
+                    current = current.copy(
+                        phase = Phase.READY,
+                        endsAtEpochSec = null,
+                        pausedAtEpochSec = null,
+                        stopwatchStartedAtEpochSec = null,
+                        stopwatchAccumulatedSec = accumulated,
+                        stepCompleted = false
+                    )
+                    continue
+                }
             }
-            val accumulated = state.stopwatchAccumulatedSec + elapsed
-            return if (step.startMode == StartMode.MANUAL) {
-                state.copy(
-                    phase = Phase.READY,
+            val nextIndex = current.activeStepIndex + 1
+            if (nextIndex >= current.steps.size) {
+                return current.copy(
+                    phase = Phase.COMPLETED,
                     endsAtEpochSec = null,
                     pausedAtEpochSec = null,
                     stopwatchStartedAtEpochSec = null,
-                    stopwatchAccumulatedSec = accumulated,
-                    stepCompleted = true
-                )
-            } else {
-                state.copy(
-                    phase = Phase.READY,
-                    endsAtEpochSec = null,
-                    pausedAtEpochSec = null,
-                    stopwatchStartedAtEpochSec = null,
-                    stopwatchAccumulatedSec = accumulated,
+                    stopwatchAccumulatedSec = 0,
                     stepCompleted = false
-                ).let { onNext(it) }
+                )
             }
-        }
-        val nextIndex = state.activeStepIndex + 1
-        if (nextIndex >= state.steps.size) {
-            return state.copy(
-                phase = Phase.COMPLETED,
+            return current.copy(
+                activeStepIndex = nextIndex,
+                phase = Phase.READY,
                 endsAtEpochSec = null,
                 pausedAtEpochSec = null,
                 stopwatchStartedAtEpochSec = null,
@@ -181,15 +194,6 @@ object TimerReducer {
                 stepCompleted = false
             )
         }
-        return state.copy(
-            activeStepIndex = nextIndex,
-            phase = Phase.READY,
-            endsAtEpochSec = null,
-            pausedAtEpochSec = null,
-            stopwatchStartedAtEpochSec = null,
-            stopwatchAccumulatedSec = 0,
-            stepCompleted = false
-        )
     }
 
     private fun onBack(state: RunState): RunState {

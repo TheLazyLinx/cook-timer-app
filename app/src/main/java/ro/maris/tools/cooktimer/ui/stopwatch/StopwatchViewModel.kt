@@ -6,13 +6,12 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import ro.maris.tools.cooktimer.audio.SoundDetector
-import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
 import ro.maris.tools.cooktimer.audio.SfxPlayer
-import ro.maris.tools.cooktimer.audio.SfxId
+import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
 import ro.maris.tools.cooktimer.domain.model.Lap
@@ -22,10 +21,11 @@ import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.model.Preset
 import ro.maris.tools.cooktimer.domain.model.Step
 import ro.maris.tools.cooktimer.domain.model.StartMode
+import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
-import ro.maris.tools.cooktimer.ui.sound.SoundTapGestureRecognizer
+import ro.maris.tools.cooktimer.ui.sound.SoundGestureDelegate
 import javax.inject.Inject
 import java.util.UUID
 import kotlin.math.max
@@ -35,6 +35,7 @@ class StopwatchViewModel @Inject constructor(
     private val timeProvider: TimeProvider,
     private val presetRepository: PresetRepository,
     private val settingsRepository: SettingsRepository,
+    private val billingRepository: BillingRepository,
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
@@ -58,9 +59,6 @@ class StopwatchViewModel @Inject constructor(
         val saved: SessionHistory? get() = histories[HistorySlot.SAVED]
     }
 
-    private var lastRejectionReason: String? = null
-    private var lastHandledDetectionCount = 0
-
     private val engine = TimerEngine(
         timeProvider = timeProvider,
         scope = viewModelScope
@@ -69,7 +67,13 @@ class StopwatchViewModel @Inject constructor(
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
     val settings = settingsRepository.observeSettings()
-    private val _isScreenVisible = MutableStateFlow(false)
+    val isPremium: StateFlow<Boolean> = billingRepository.entitlement
+        .map { it.isPremium }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = false
+        )
     private val _historyState = MutableStateFlow(loadPersistedHistoryState())
     val historyState: StateFlow<HistoryState> = _historyState
 
@@ -96,13 +100,7 @@ class StopwatchViewModel @Inject constructor(
         }
     }
 
-    fun onVisibilityChange(visible: Boolean) {
-        _isScreenVisible.value = visible
-        if (!visible) {
-            tapRecognizer.clear()
-            lastHandledDetectionCount = soundDetector.state.value.count
-        }
-    }
+    fun onVisibilityChange(visible: Boolean) = gestureDelegate.onVisibilityChange(visible)
 
     fun start() = engine.start()
     fun pause() = engine.pause()
@@ -140,10 +138,7 @@ class StopwatchViewModel @Inject constructor(
         }
     }
 
-    private val consumerId = "StopwatchViewModel-${UUID.randomUUID()}"
-
     init {
-        // Initialize with default Stopwatch Preset (duration = null)
         val defaultStopwatchPreset = Preset(
             id = UUID.randomUUID().toString(),
             name = "Stopwatch",
@@ -151,7 +146,7 @@ class StopwatchViewModel @Inject constructor(
                 Step(
                     id = UUID.randomUUID().toString(),
                     title = "Stopwatch",
-                    durationSec = null, // Infinite duration (gate step / stopwatch)
+                    durationSec = null,
                     startMode = StartMode.MANUAL
                 )
             ),
@@ -231,12 +226,15 @@ class StopwatchViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Stopwatch screen: LAP = record lap (or reset when paused).
+     * PARSE is a no-op (reserved for future voice/command parsing).
+     */
     private fun handleSoundTrigger(action: SoundTriggerAction): Boolean {
         val currentState = state.value ?: return false
 
         when (action) {
             SoundTriggerAction.NONE -> {
-                // Do nothing
                 return false
             }
             SoundTriggerAction.START_RESUME -> {
@@ -256,8 +254,6 @@ class StopwatchViewModel @Inject constructor(
                         vibrationHelper.vibrateTick()
                         return true
                     }
-                    // Backward-compatibility: old START_RESUME configs should still
-                    // honor the newer double-tap toggle behavior while running.
                     Phase.RUNNING -> {
                         pause()
                         vibrationHelper.vibrateTick()
@@ -273,6 +269,16 @@ class StopwatchViewModel @Inject constructor(
                     return true
                 }
                 return false
+            }
+            SoundTriggerAction.LAP -> {
+                if (currentState.phase == Phase.PAUSED) {
+                    reset()
+                    vibrationHelper.vibrateTick()
+                    return true
+                }
+                if (!currentState.isStopwatchRunning) return false
+                lap()
+                return true
             }
             SoundTriggerAction.NEXT_STEP -> {
                 next()
@@ -305,58 +311,16 @@ class StopwatchViewModel @Inject constructor(
                 }
             }
             SoundTriggerAction.PARSE -> {
-                // Future integration for Voice/Command parsing
+                // No-op: reserved for future voice/command parsing
                 return false
             }
         }
         return false
     }
 
-    private fun handleTripleTap(): Boolean {
-        val currentState = state.value ?: return false
-        val canLap = currentState.isStopwatchRunning || currentState.phase == Phase.PAUSED
-        if (!canLap) return false
-        engine.lap()
-        vibrationHelper.vibrateTick()
-        return true
-    }
-
-    private fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {
-        if (!isFreeGestureProfile(event.type)) return false
-        val family = event.type.substringBefore(" (").trim()
-        return when (family) {
-            "Snap" -> {
-                if (event.type == "Snap (Low)") return false
-                if (event.confidence < 0.84f) return false
-                !(event.centroid < 3300f && event.tilt <= -0.22f)
-            }
-            "Clap", "Slap" -> {
-                if (event.confidence < 0.82f) return false
-                val obviousObjectContact =
-                    event.durationMs <= 55 &&
-                        event.centroid <= 2900f &&
-                        event.tilt <= -0.55f
-                val lowBandThudLike =
-                    event.centroid < 2400f &&
-                        event.tilt <= -0.80f
-                if (obviousObjectContact || lowBandThudLike) return false
-                true
-            }
-            else -> false
-        }
-    }
-
-    private fun isFreeGestureProfile(type: String): Boolean {
-        return when (type.substringBefore(" (").trim()) {
-            "Snap", "Clap", "Slap" -> true
-            else -> false
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
-        tapRecognizer.clear()
-        soundDetector.stop(consumerId)
+        gestureDelegate.clear()
     }
 
     private fun buildCurrentSessionHistorySnapshot(): SessionHistory? {

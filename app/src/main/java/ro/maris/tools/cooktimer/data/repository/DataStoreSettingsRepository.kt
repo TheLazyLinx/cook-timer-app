@@ -42,22 +42,31 @@ class DataStoreSettingsRepository @Inject constructor(
         val SOUND_EFFECTS_ENABLED = booleanPreferencesKey("sound_effects_enabled")
         val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val SOUND_DETECTION_ENABLED = booleanPreferencesKey("sound_detection_enabled")
+        /** Legacy key — migrated to [DOUBLE_TAP_ACTION]. Kept for one-time read-migration only. */
         val SOUND_TRIGGER_ACTION = stringPreferencesKey("sound_trigger_action")
+        val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
+        val TRIPLE_TAP_ACTION = stringPreferencesKey("triple_tap_action")
         val ALLOWED_SOUND_PROFILES = stringSetPreferencesKey("allowed_sound_profiles")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val SEGMENTED_DISPLAY_ENABLED = booleanPreferencesKey("segmented_display_enabled")
         val HAS_SHOWN_SOUND_HELP_OVERLAY = booleanPreferencesKey("has_shown_sound_help_overlay")
+        val IS_PREMIUM = booleanPreferencesKey("is_premium")
     }
 
     override fun observeSettings(): Flow<AppSettings> {
         return context.dataStore.data.map { preferences ->
+            val doubleTapAction = preferences[Keys.DOUBLE_TAP_ACTION]
+                ?: preferences[Keys.SOUND_TRIGGER_ACTION]
             AppSettings(
                 soundEffectsEnabled = preferences[Keys.SOUND_EFFECTS_ENABLED] ?: true,
                 hapticsEnabled = preferences[Keys.HAPTICS_ENABLED] ?: true,
                 soundDetectionEnabled = preferences[Keys.SOUND_DETECTION_ENABLED] ?: false,
-                soundTriggerAction = preferences[Keys.SOUND_TRIGGER_ACTION]
+                doubleTapAction = doubleTapAction
                     ?.let { runCatching { SoundTriggerAction.valueOf(it) }.getOrNull() }
                     ?: SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+                tripleTapAction = preferences[Keys.TRIPLE_TAP_ACTION]
+                    ?.let { runCatching { SoundTriggerAction.valueOf(it) }.getOrNull() }
+                    ?: SoundTriggerAction.PARSE,
                 allowedSoundProfiles = ((preferences[Keys.ALLOWED_SOUND_PROFILES]
                     ?.map(::normalizeProfileName)?.toSet()
                     ?: freeAllowedProfiles).intersect(freeAllowedProfiles))
@@ -66,7 +75,8 @@ class DataStoreSettingsRepository @Inject constructor(
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
                     ?: ThemeMode.SYSTEM,
                 segmentedDisplayEnabled = preferences[Keys.SEGMENTED_DISPLAY_ENABLED] ?: true,
-                hasShownSoundHelpOverlay = preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] ?: false
+                hasShownSoundHelpOverlay = preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] ?: false,
+                isPremium = preferences[Keys.IS_PREMIUM] ?: false
             )
         }
     }
@@ -93,9 +103,15 @@ class DataStoreSettingsRepository @Inject constructor(
         }
     }
 
-    override suspend fun setSoundTriggerAction(action: SoundTriggerAction) {
+    override suspend fun setDoubleTapAction(action: SoundTriggerAction) {
         context.dataStore.edit { preferences ->
-            preferences[Keys.SOUND_TRIGGER_ACTION] = action.name
+            preferences[Keys.DOUBLE_TAP_ACTION] = action.name
+        }
+    }
+
+    override suspend fun setTripleTapAction(action: SoundTriggerAction) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.TRIPLE_TAP_ACTION] = action.name
         }
     }
 
@@ -120,6 +136,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setHasShownSoundHelpOverlay(hasShown: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] = hasShown
+        }
+    }
+
+    override suspend fun setIsPremium(isPremium: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.IS_PREMIUM] = isPremium
         }
     }
 }

@@ -4,25 +4,24 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import ro.maris.tools.cooktimer.audio.SoundDetector
-import ro.maris.tools.cooktimer.audio.SoundDetectionEvent
 import ro.maris.tools.cooktimer.audio.SfxPlayer
-import ro.maris.tools.cooktimer.audio.SfxId
+import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
 import ro.maris.tools.cooktimer.domain.engine.TimerEngine
 import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.domain.model.RunState
 import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
+import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
-import ro.maris.tools.cooktimer.ui.sound.SoundTapGestureRecognizer
-import java.util.UUID
+import ro.maris.tools.cooktimer.ui.sound.SoundGestureDelegate
 import javax.inject.Inject
 
 @HiltViewModel
@@ -30,14 +29,12 @@ class RunViewModel @Inject constructor(
     timeProvider: TimeProvider,
     private val presetRepository: PresetRepository,
     private val settingsRepository: SettingsRepository,
+    private val billingRepository: BillingRepository,
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
-
-    private var lastRejectionReason: String? = null
-    private var lastHandledDetectionCount = 0
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -47,7 +44,13 @@ class RunViewModel @Inject constructor(
     val state: StateFlow<RunState?> = engine.state
     val detectorState = soundDetector.state
     val settings = settingsRepository.observeSettings()
-    private val _isScreenVisible = MutableStateFlow(false)
+    val isPremium: StateFlow<Boolean> = billingRepository.entitlement
+        .map { it.isPremium }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = false
+        )
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
 
@@ -74,13 +77,7 @@ class RunViewModel @Inject constructor(
         }
     }
 
-    fun onVisibilityChange(visible: Boolean) {
-        _isScreenVisible.value = visible
-        if (!visible) {
-            tapRecognizer.clear()
-            lastHandledDetectionCount = soundDetector.state.value.count
-        }
-    }
+    fun onVisibilityChange(visible: Boolean) = gestureDelegate.onVisibilityChange(visible)
 
     fun start() = engine.start()
     fun pause() = engine.pause()
@@ -91,7 +88,6 @@ class RunViewModel @Inject constructor(
 
     fun lap() {
         vibrationHelper.vibrateVirtualKey()
-        // Wiring for future lap logic
     }
 
     fun markHelpAsShown() {
@@ -99,8 +95,6 @@ class RunViewModel @Inject constructor(
             settingsRepository.setHasShownSoundHelpOverlay(true)
         }
     }
-
-    private val consumerId = "RunViewModel-${UUID.randomUUID()}"
 
     init {
         if (presetId != null) {
@@ -186,13 +180,15 @@ class RunViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Preset Run screen: PARSE = advance to the next step.
+     */
     private fun handleSoundTrigger(action: SoundTriggerAction): Boolean {
         val currentState = state.value ?: return false
         val runningStopwatchStep = currentState.isStopwatchRunning && currentState.activeStep?.durationSec == null
 
         when (action) {
             SoundTriggerAction.NONE -> {
-                // Do nothing
                 return false
             }
             SoundTriggerAction.START_RESUME -> {
@@ -212,8 +208,6 @@ class RunViewModel @Inject constructor(
                         vibrationHelper.vibrateTick()
                         return true
                     }
-                    // Backward-compatibility: old START_RESUME configs should still
-                    // honor the newer double-tap toggle behavior while running.
                     Phase.RUNNING -> {
                         pause()
                         vibrationHelper.vibrateTick()
@@ -229,6 +223,10 @@ class RunViewModel @Inject constructor(
                     return true
                 }
                 return false
+            }
+            SoundTriggerAction.LAP -> {
+                lap()
+                return true
             }
             SoundTriggerAction.NEXT_STEP -> {
                 next()
@@ -270,45 +268,8 @@ class RunViewModel @Inject constructor(
         return false
     }
 
-    private fun handleTripleTap(): Boolean {
-        return handleSoundTrigger(SoundTriggerAction.PARSE)
-    }
-
-    private fun isActionableFreeGestureEvent(event: SoundDetectionEvent): Boolean {
-        if (!isFreeGestureProfile(event.type)) return false
-        val family = event.type.substringBefore(" (").trim()
-        return when (family) {
-            "Snap" -> {
-                if (event.type == "Snap (Low)") return false
-                if (event.confidence < 0.84f) return false
-                !(event.centroid < 3300f && event.tilt <= -0.22f)
-            }
-            "Clap", "Slap" -> {
-                if (event.confidence < 0.82f) return false
-                val obviousObjectContact =
-                    event.durationMs <= 55 &&
-                        event.centroid <= 2900f &&
-                        event.tilt <= -0.55f
-                val lowBandThudLike =
-                    event.centroid < 2400f &&
-                        event.tilt <= -0.80f
-                if (obviousObjectContact || lowBandThudLike) return false
-                true
-            }
-            else -> false
-        }
-    }
-
-    private fun isFreeGestureProfile(type: String): Boolean {
-        return when (type.substringBefore(" (").trim()) {
-            "Snap", "Clap", "Slap" -> true
-            else -> false
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
-        tapRecognizer.clear()
-        soundDetector.stop(consumerId)
+        gestureDelegate.clear()
     }
 }
