@@ -5,8 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -54,28 +54,20 @@ class RunViewModel @Inject constructor(
 
     private val presetId: String? = savedStateHandle.get<String>("presetId")
 
-    private val tapRecognizer = SoundTapGestureRecognizer(viewModelScope) { tapCount ->
-        tapCount.taps.forEachIndexed { index, event ->
-            soundDetector.annotateGestureForEvent(
-                eventTimestampMs = event.timestampMs,
-                groupId = tapCount.groupId,
-                tapIndex = index + 1,
-                tapCount = tapCount.tapCount,
-                unpairedReason = tapCount.unpairedReason
-            )
-        }
-        if (tapCount.tapCount >= 2) {
-            soundDetector.onGestureResolvedForCalibration(tapCount.taps, tapCount.tapCount)
-        }
-        val handled = when {
-            tapCount.tapCount >= 3 -> handleTripleTap()
-            tapCount.tapCount >= 2 -> handleSoundTrigger(SoundTriggerAction.TOGGLE_PLAY_PAUSE)
-            else -> false
-        }
-        if (handled) {
-            sfxPlayer.play(SfxId.DetectionSuccess)
-        }
-    }
+    private val gestureDelegate = SoundGestureDelegate(
+        scope = viewModelScope,
+        soundDetector = soundDetector,
+        settingsRepository = settingsRepository,
+        billingRepository = billingRepository,
+        sfxPlayer = sfxPlayer,
+        vibrationHelper = vibrationHelper,
+        engineState = engine.state,
+        defaultDoubleTapAction = SoundTriggerAction.TOGGLE_PLAY_PAUSE,
+        defaultTripleTapAction = SoundTriggerAction.PARSE,
+        consumerIdPrefix = "run",
+        debugContextProvider = { state.value?.presetName ?: "Run" },
+        onSoundTrigger = ::handleSoundTrigger
+    )
 
     fun onVisibilityChange(visible: Boolean) = gestureDelegate.onVisibilityChange(visible)
 
@@ -107,77 +99,7 @@ class RunViewModel @Inject constructor(
                 }
             }
         }
-
-        // Monitor settings to start/stop detection efficiently
-        viewModelScope.launch {
-            combine(
-                settingsRepository.observeSettings(),
-                _isScreenVisible
-            ) { settings, visible ->
-                Pair(settings, visible)
-            }.collectLatest { (settings, visible) ->
-                if (settings.soundDetectionEnabled && visible) {
-                    soundDetector.start(consumerId)
-                    val presetName = state.value?.presetName ?: "Run"
-                    soundDetector.debugContext = presetName
-                } else {
-                    soundDetector.stop(consumerId)
-                }
-            }
-        }
-
-        // Observe events and feedback
-        viewModelScope.launch {
-            combine(
-                settingsRepository.observeSettings(),
-                soundDetector.state,
-                _isScreenVisible
-            ) { settings, detectorState, isVisible ->
-                Triple(settings, detectorState, isVisible)
-            }.collectLatest { (settings, detectorState, isVisible) ->                
-                // Play failure sound if rejection reason changed
-                if (detectorState.lastRejectionReason != null &&
-                    detectorState.lastRejectionReason != lastRejectionReason) {
-                    if (isVisible && settings.soundDetectionEnabled) {
-                        sfxPlayer.play(SfxId.DetectionFailed)
-                    }
-                }
-                lastRejectionReason = detectorState.lastRejectionReason
-                if (detectorState.count < lastHandledDetectionCount) {
-                    lastHandledDetectionCount = detectorState.count
-                }
-
-                // Handle all newly accepted detections, not just the latest one.
-                if (isVisible && settings.soundDetectionEnabled) {
-                    val newCount = (detectorState.count - lastHandledDetectionCount).coerceAtLeast(0)
-                    if (newCount > 0) {
-                        detectorState.events
-                            .take(newCount)
-                            .asReversed()
-                            .forEach { event ->
-                                if (isActionableFreeGestureEvent(event)) {
-                                    tapRecognizer.onTap(event)
-                                }
-                            }
-                        lastHandledDetectionCount = detectorState.count
-                    }
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            var lastState: RunState? = null
-            engine.state.collect { currentState ->
-                if (lastState != null && currentState != null) {
-                    val phaseChanged = currentState.phase != lastState?.phase
-                    val stepChanged = currentState.activeStepIndex != lastState?.activeStepIndex
-                    if (phaseChanged || stepChanged) {
-                        vibrationHelper.vibrateConfirm()
-                    }
-                }
-                lastState = currentState
-            }
-        }
+        gestureDelegate.startObserving()
     }
 
     /**
@@ -188,81 +110,36 @@ class RunViewModel @Inject constructor(
         val runningStopwatchStep = currentState.isStopwatchRunning && currentState.activeStep?.durationSec == null
 
         when (action) {
-            SoundTriggerAction.NONE -> {
-                return false
-            }
+            SoundTriggerAction.NONE -> return false
             SoundTriggerAction.START_RESUME -> {
-                if (runningStopwatchStep) {
-                    pause()
-                    vibrationHelper.vibrateTick()
-                    return true
-                }
+                if (runningStopwatchStep) { pause(); vibrationHelper.vibrateTick(); return true }
                 when (currentState.phase) {
-                    Phase.READY -> {
-                        start()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
-                    Phase.PAUSED -> {
-                        resume()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
-                    Phase.RUNNING -> {
-                        pause()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
+                    Phase.READY -> { start(); vibrationHelper.vibrateTick(); return true }
+                    Phase.PAUSED -> { resume(); vibrationHelper.vibrateTick(); return true }
+                    Phase.RUNNING -> { pause(); vibrationHelper.vibrateTick(); return true }
                     Phase.COMPLETED -> return false
                 }
             }
             SoundTriggerAction.PAUSE -> {
                 if (currentState.phase == Phase.RUNNING || runningStopwatchStep) {
-                    pause()
-                    vibrationHelper.vibrateTick()
-                    return true
+                    pause(); vibrationHelper.vibrateTick(); return true
                 }
                 return false
             }
-            SoundTriggerAction.LAP -> {
-                lap()
-                return true
-            }
-            SoundTriggerAction.NEXT_STEP -> {
-                next()
-                vibrationHelper.vibrateTick()
-                return true
-            }
+            SoundTriggerAction.LAP -> { lap(); return true }
+            SoundTriggerAction.NEXT_STEP -> { next(); vibrationHelper.vibrateTick(); return true }
             SoundTriggerAction.TOGGLE_PLAY_PAUSE -> {
-                if (runningStopwatchStep) {
-                    pause()
-                    vibrationHelper.vibrateTick()
-                    return true
-                }
+                if (runningStopwatchStep) { pause(); vibrationHelper.vibrateTick(); return true }
                 when (currentState.phase) {
-                    Phase.READY -> {
-                        start()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
-                    Phase.RUNNING -> {
-                        pause()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
-                    Phase.PAUSED -> {
-                        resume()
-                        vibrationHelper.vibrateTick()
-                        return true
-                    }
+                    Phase.READY -> { start(); vibrationHelper.vibrateTick(); return true }
+                    Phase.RUNNING -> { pause(); vibrationHelper.vibrateTick(); return true }
+                    Phase.PAUSED -> { resume(); vibrationHelper.vibrateTick(); return true }
                     Phase.COMPLETED -> return false
                 }
             }
             SoundTriggerAction.PARSE -> {
                 if (currentState.phase == Phase.COMPLETED) return false
-                next()
-                vibrationHelper.vibrateTick()
-                return true
+                next(); vibrationHelper.vibrateTick(); return true
             }
         }
         return false
