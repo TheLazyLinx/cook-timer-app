@@ -80,14 +80,6 @@ object SoundUtils {
         )
     }
 
-    /**
-     * Calculates the Spectral Centroid (center of mass of the spectrum) in Hz.
-     * Legacy wrapper for backward compatibility if needed, but perfer calculateSpectralFeatures
-     */
-    fun calculateSpectralCentroid(buffer: FloatArray, sampleRate: Int): Float {
-        return calculateSpectralFeatures(buffer, sampleRate).centroid
-    }
-
     private fun nextPowerOf2(n: Int): Int {
         var count = 0
         var num = n

@@ -7,7 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import ro.maris.tools.cooktimer.domain.model.Preset
 import ro.maris.tools.cooktimer.domain.model.StartMode
@@ -29,15 +29,14 @@ class EditPresetViewModel @Inject constructor(
     init {
         if (presetId != null) {
             viewModelScope.launch {
-                repository.observePreset(presetId).collectLatest { preset ->
-                    if (preset != null) {
-                        _state.value = EditPresetState(
-                            presetId = preset.id,
-                            name = preset.name,
-                            isBuiltIn = preset.isBuiltIn,
-                            steps = preset.steps.map { it.toEditItem() }
-                        )
-                    }
+                val preset = repository.observePreset(presetId).firstOrNull()
+                if (preset != null) {
+                    _state.value = EditPresetState(
+                        presetId = preset.id,
+                        name = preset.name,
+                        isBuiltIn = preset.isBuiltIn,
+                        steps = preset.steps.map { it.toEditItem() }
+                    )
                 }
             }
         }

@@ -11,16 +11,20 @@ import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
+import com.android.billingclient.api.QueryPurchasesParams
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import ro.maris.tools.cooktimer.domain.model.EntitlementSource
 import ro.maris.tools.cooktimer.domain.model.EntitlementState
@@ -45,6 +49,7 @@ class PlayBillingRepository @Inject constructor(
         .setListener(this)
         .build()
 
+    private val connectionMutex = Mutex()
     private var connectionDeferred: CompletableDeferred<Boolean>? = null
     private var cachedProductDetails: ProductDetails? = null
 
@@ -92,39 +97,46 @@ class PlayBillingRepository @Inject constructor(
 
     private suspend fun ensureConnected(): Boolean {
         if (billingClient.isReady) return true
-        val existing = connectionDeferred
-        if (existing != null) return existing.await()
 
-        val deferred = CompletableDeferred<Boolean>()
-        connectionDeferred = deferred
-        billingClient.startConnection(object : BillingClientStateListener {
-            override fun onBillingSetupFinished(billingResult: BillingResult) {
-                val connected = billingResult.responseCode == BillingClient.BillingResponseCode.OK
-                if (!deferred.isCompleted) {
-                    deferred.complete(connected)
+        val deferred = connectionMutex.withLock {
+            connectionDeferred?.let { return@withLock it }
+
+            val newDeferred = CompletableDeferred<Boolean>()
+            connectionDeferred = newDeferred
+            billingClient.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    val connected = billingResult.responseCode == BillingClient.BillingResponseCode.OK
+                    newDeferred.complete(connected)
                 }
-            }
 
-            override fun onBillingServiceDisconnected() {
-                connectionDeferred?.let { pending ->
-                    if (!pending.isCompleted) {
-                        pending.complete(false)
+                override fun onBillingServiceDisconnected() {
+                    scope.launch {
+                        connectionMutex.withLock {
+                            connectionDeferred?.let { pending ->
+                                if (!pending.isCompleted) pending.complete(false)
+                            }
+                            connectionDeferred = null
+                        }
                     }
                 }
-                connectionDeferred = null
-            }
-        })
+            })
+            newDeferred
+        }
+
         val connected = deferred.await()
         if (connected) {
-            connectionDeferred = null
+            connectionMutex.withLock { connectionDeferred = null }
         }
         return connected
     }
 
     private suspend fun queryPurchases(): List<Purchase> {
         if (!billingClient.isReady) return emptyList()
+        val params = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.INAPP)
+            .build()
         return suspendCancellableCoroutine { continuation ->
-            billingClient.queryPurchasesAsync(BillingClient.ProductType.INAPP) { result, purchases ->
+            billingClient.queryPurchasesAsync(params) { result, purchases ->
                 if (result.responseCode == BillingClient.BillingResponseCode.OK) {
                     continuation.resume(purchases)
                 } else {
@@ -194,5 +206,10 @@ class PlayBillingRepository @Inject constructor(
         scope.launch {
             settingsRepository.setIsPremium(isPremium)
         }
+    }
+
+    fun release() {
+        billingClient.endConnection()
+        scope.cancel()
     }
 }
