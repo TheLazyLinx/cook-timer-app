@@ -95,8 +95,8 @@ class SfxPlayer @Inject constructor(
             // If other sounds are active, fade them out to prioritize the new one.
             activeStreams.forEach { stream ->
                 if (stream.sfxId != sfx) {
-                    // Duck logic: reduce volume to 30% of current
-                    val newVol = stream.currentVolume * 0.3f
+                    // Duck logic: reduce volume to 30% of original to avoid compounding
+                    val newVol = stream.sfxId.volume * 0.3f
                     soundPool.setVolume(stream.streamId, newVol, newVol)
                     stream.currentVolume = newVol
                 }
@@ -105,7 +105,7 @@ class SfxPlayer @Inject constructor(
             // Play
             lastPlayAtMs = now
             val soundId = soundIds[sfx] ?: return
-            val volume = 1.0f
+            val volume = sfx.volume
 
             val streamId = soundPool.play(soundId, volume, volume, 1, 0, 1f)
 

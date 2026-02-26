@@ -79,6 +79,7 @@ class RunViewModel @Inject constructor(
     fun reset() = engine.reset()
 
     fun lap() {
+        engine.lap()
         vibrationHelper.vibrateVirtualKey()
     }
 
