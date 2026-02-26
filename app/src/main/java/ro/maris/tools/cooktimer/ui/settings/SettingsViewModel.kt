@@ -81,6 +81,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setAccentColorHex(hex: String) {
+        viewModelScope.launch {
+            settingsRepository.setAccentColorHex(hex)
+        }
+    }
+
     fun startPremiumPurchase(activity: android.app.Activity?) {
         if (activity == null) return
         billingRepository.launchPurchaseFlow(activity)

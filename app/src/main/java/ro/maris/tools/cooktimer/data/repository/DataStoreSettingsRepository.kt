@@ -48,6 +48,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val TRIPLE_TAP_ACTION = stringPreferencesKey("triple_tap_action")
         val ALLOWED_SOUND_PROFILES = stringSetPreferencesKey("allowed_sound_profiles")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val ACCENT_COLOR_HEX = stringPreferencesKey("accent_color_hex")
         val SEGMENTED_DISPLAY_ENABLED = booleanPreferencesKey("segmented_display_enabled")
         val HAS_SHOWN_SOUND_HELP_OVERLAY = booleanPreferencesKey("has_shown_sound_help_overlay")
         val IS_PREMIUM = booleanPreferencesKey("is_premium")
@@ -74,6 +75,7 @@ class DataStoreSettingsRepository @Inject constructor(
                 themeMode = preferences[Keys.THEME_MODE]
                     ?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() }
                     ?: ThemeMode.SYSTEM,
+                accentColorHex = preferences[Keys.ACCENT_COLOR_HEX] ?: "FFE57373",
                 segmentedDisplayEnabled = preferences[Keys.SEGMENTED_DISPLAY_ENABLED] ?: true,
                 hasShownSoundHelpOverlay = preferences[Keys.HAS_SHOWN_SOUND_HELP_OVERLAY] ?: false,
                 isPremium = preferences[Keys.IS_PREMIUM] ?: false
@@ -124,6 +126,12 @@ class DataStoreSettingsRepository @Inject constructor(
     override suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { preferences ->
             preferences[Keys.THEME_MODE] = mode.name
+        }
+    }
+
+    override suspend fun setAccentColorHex(hex: String) {
+        context.dataStore.edit { preferences ->
+            preferences[Keys.ACCENT_COLOR_HEX] = hex
         }
     }
 

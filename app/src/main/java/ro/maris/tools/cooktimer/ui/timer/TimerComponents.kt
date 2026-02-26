@@ -18,7 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ro.maris.tools.cooktimer.ui.run.NumberDisplay
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import ro.maris.tools.cooktimer.ui.theme.LocalAccentColor
 
 @Composable
 fun DurationPicker(
@@ -49,7 +49,7 @@ fun DurationPicker(
             text = ":",
             style = MaterialTheme.typography.displayMedium,
             modifier = Modifier.padding(horizontal = 8.dp),
-            color = SoftRed
+            color = LocalAccentColor.current
         )
         TimeUnitColumn(
             value = mins,
@@ -65,7 +65,7 @@ fun DurationPicker(
             text = ":",
             style = MaterialTheme.typography.displayMedium,
             modifier = Modifier.padding(horizontal = 8.dp),
-            color = SoftRed
+            color = LocalAccentColor.current
         )
         TimeUnitColumn(
             value = secs,
@@ -100,7 +100,7 @@ private fun TimeUnitColumn(
             Icon(
                 Icons.Filled.KeyboardArrowUp,
                 contentDescription = "Increase",
-                tint = SoftRed
+                tint = LocalAccentColor.current
             )
         }
         
@@ -108,10 +108,10 @@ private fun TimeUnitColumn(
             text = "%02d".format(value),
             useSegmentedDisplay = useSegmentedDisplay,
             modifier = Modifier.width(56.dp),
-            segmentColor = SoftRed,
+            segmentColor = LocalAccentColor.current,
             spacing = 2.dp,
             textStyle = MaterialTheme.typography.displaySmall,
-            textColor = SoftRed
+            textColor = LocalAccentColor.current
         )
         
         IconButton(onClick = {
@@ -121,14 +121,14 @@ private fun TimeUnitColumn(
             Icon(
                 Icons.Filled.KeyboardArrowDown,
                 contentDescription = "Decrease",
-                tint = SoftRed
+                tint = LocalAccentColor.current
             )
         }
         
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = SoftRed
+            color = LocalAccentColor.current
         )
     }
 }

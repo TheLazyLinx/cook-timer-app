@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import ro.maris.tools.cooktimer.ui.theme.LocalAccentColor
 
 fun getFriendlyRejectionMessage(reason: String): String {
     return when {
@@ -63,7 +63,7 @@ fun StarterHelpOverlay(
              
              Button(
                  onClick = onDismiss,
-                 colors = ButtonDefaults.buttonColors(containerColor = SoftRed)
+                 colors = ButtonDefaults.buttonColors(containerColor = LocalAccentColor.current)
              ) {
                  Text("Got it")
              }

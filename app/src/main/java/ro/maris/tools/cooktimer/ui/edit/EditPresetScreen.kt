@@ -47,7 +47,7 @@ import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.domain.model.StartMode
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import ro.maris.tools.cooktimer.ui.theme.LocalAccentColor
 
 @Composable
 fun EditPresetScreen(
@@ -58,7 +58,7 @@ fun EditPresetScreen(
     val state by vm.state.collectAsState()
     val sfx = LocalSfxPlayer.current
     val accentButtonColors = androidx.compose.material3.ButtonDefaults.buttonColors(
-        containerColor = SoftRed,
+        containerColor = LocalAccentColor.current,
         contentColor = Color.White
     )
     val focusManager = LocalFocusManager.current
@@ -264,9 +264,9 @@ private fun StepEditorCard(
                     checked = step.durationEnabled,
                     onCheckedChange = onDurationToggle,
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = SoftRed,
-                        checkedTrackColor = SoftRed.copy(alpha = 0.4f),
-                        checkedBorderColor = SoftRed
+                        checkedThumbColor = LocalAccentColor.current,
+                        checkedTrackColor = LocalAccentColor.current.copy(alpha = 0.4f),
+                        checkedBorderColor = LocalAccentColor.current
                     )
                 )
             }

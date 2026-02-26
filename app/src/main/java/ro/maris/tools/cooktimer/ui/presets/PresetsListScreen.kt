@@ -49,7 +49,7 @@ import ro.maris.tools.cooktimer.audio.LocalSfxPlayer
 import ro.maris.tools.cooktimer.audio.SfxId
 import ro.maris.tools.cooktimer.audio.sfxClick
 import ro.maris.tools.cooktimer.domain.model.Preset
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import ro.maris.tools.cooktimer.ui.theme.LocalAccentColor
 
 @Composable
 fun PresetsListScreen(
@@ -68,7 +68,7 @@ fun PresetsListScreen(
     var pendingDuplicate by remember { mutableStateOf<Preset?>(null) }
     val activity = LocalContext.current as? Activity
     val accentButtonColors = ButtonDefaults.buttonColors(
-        containerColor = SoftRed,
+        containerColor = LocalAccentColor.current,
         contentColor = Color.White
     )
     val disabledButtonColors = ButtonDefaults.buttonColors(
