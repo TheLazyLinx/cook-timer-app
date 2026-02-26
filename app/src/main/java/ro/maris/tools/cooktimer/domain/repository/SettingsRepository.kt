@@ -15,6 +15,7 @@ interface SettingsRepository {
     suspend fun setTripleTapAction(action: SoundTriggerAction)
     suspend fun setAllowedSoundProfiles(profiles: Set<String>)
     suspend fun setThemeMode(mode: ThemeMode)
+    suspend fun setAccentColorHex(hex: String)
     suspend fun setSegmentedDisplayEnabled(enabled: Boolean)
     suspend fun setHasShownSoundHelpOverlay(hasShown: Boolean)
     suspend fun setIsPremium(isPremium: Boolean)

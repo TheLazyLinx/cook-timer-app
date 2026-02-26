@@ -55,7 +55,7 @@ import ro.maris.tools.cooktimer.domain.model.Phase
 import ro.maris.tools.cooktimer.ui.run.NumberDisplay
 import ro.maris.tools.cooktimer.ui.run.RetroArcSoundIndicator
 import ro.maris.tools.cooktimer.ui.run.StarterHelpOverlay
-import ro.maris.tools.cooktimer.ui.theme.SoftRed
+import ro.maris.tools.cooktimer.ui.theme.LocalAccentColor
 
 @Composable
 fun StopwatchScreen(
@@ -158,16 +158,16 @@ fun StopwatchScreen(
             ro.maris.tools.cooktimer.ui.run.CircularSegmentedProgress(
                 progress = progress,
                 modifier = Modifier.size(240.dp),
-                activeColor = SoftRed
+                activeColor = LocalAccentColor.current
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     NumberDisplay(
                         text = timerValue,
                         useSegmentedDisplay = useSegmentedDisplay,
                         modifier = Modifier.width(180.dp),
-                        segmentColor = SoftRed,
+                        segmentColor = LocalAccentColor.current,
                         textStyle = MaterialTheme.typography.displayLarge,
-                        textColor = SoftRed
+                        textColor = LocalAccentColor.current
                     )
 
                     if (state.laps.isNotEmpty()) {
@@ -177,14 +177,14 @@ fun StopwatchScreen(
                             useSegmentedDisplay = useSegmentedDisplay,
                             modifier = Modifier
                                 .size(width = 50.dp, height = 30.dp),
-                            segmentColor = SoftRed,
+                            segmentColor = LocalAccentColor.current,
                             textStyle = MaterialTheme.typography.titleMedium,
-                            textColor = SoftRed
+                            textColor = LocalAccentColor.current
                         )
                         Text(
                             text = "Laps",
                             style = MaterialTheme.typography.labelSmall,
-                            color = SoftRed
+                            color = LocalAccentColor.current
                         )
                     }
                 }
@@ -201,7 +201,7 @@ fun StopwatchScreen(
     @Composable
     fun Controls(modifier: Modifier = Modifier) {
         val isRunning = state.phase == Phase.RUNNING || (state.phase == Phase.READY && state.isStopwatchRunning)
-        val mainActionColor = SoftRed
+        val mainActionColor = LocalAccentColor.current
         val secondaryActionColor = MaterialTheme.colorScheme.primary
         val buttonBgColor = MaterialTheme.colorScheme.surface
 

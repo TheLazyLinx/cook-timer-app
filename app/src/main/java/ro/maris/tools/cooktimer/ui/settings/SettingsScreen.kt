@@ -7,11 +7,14 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
@@ -181,6 +186,13 @@ fun SettingsScreen(
                         }
                     }
                 }
+
+                // Accent Color Section
+                AccentColorCard(
+                    selectedHex = settings.accentColorHex,
+                    isPremium = isPremium,
+                    onColorSelected = { vm.setAccentColorHex(it) }
+                )
 
                 // Premium Section
                 Card(
@@ -671,6 +683,123 @@ private fun SoundTestSection(vm: SettingsViewModel, onSoundwave: () -> Unit, onD
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Sound Diagnostics")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Accent Color palette ────────────────────────────────────────────────────────
+
+private data class AccentSwatch(val label: String, val hex: String)
+
+private val accentPalette = listOf(
+    AccentSwatch("Soft Red", "FFE57373"),
+    AccentSwatch("Teal", "FF26A69A"),
+    AccentSwatch("Amber", "FFFFCA28"),
+    AccentSwatch("Blue", "FF42A5F5"),
+    AccentSwatch("Green", "FF66BB6A"),
+    AccentSwatch("Purple", "FFAB47BC"),
+    AccentSwatch("Orange", "FFFF7043"),
+    AccentSwatch("Cyan", "FF26C6DA"),
+    AccentSwatch("Pink", "FFEC407A"),
+    AccentSwatch("Lime", "FFD4E157"),
+    AccentSwatch("Indigo", "FF5C6BC0"),
+    AccentSwatch("Deep Orange", "FFFF5722"),
+)
+
+private val defaultAccentHex = accentPalette.first().hex
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccentColorCard(
+    selectedHex: String,
+    isPremium: Boolean,
+    onColorSelected: (String) -> Unit
+) {
+    val context = LocalContext.current
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Accent Color",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = "Customize the accent color for the watch face, buttons, and highlights",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (!isPremium) {
+                Text(
+                    text = "Premium feature — upgrade to unlock all colors",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                accentPalette.forEach { swatch ->
+                    val color = Color(swatch.hex.toLong(16))
+                    val isSelected = swatch.hex.equals(selectedHex, ignoreCase = true)
+                    val isDefault = swatch.hex == defaultAccentHex
+                    val isLocked = !isPremium && !isDefault
+
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .then(
+                                if (isSelected) Modifier.border(
+                                    width = 3.dp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    shape = CircleShape
+                                ) else Modifier
+                            )
+                            .padding(3.dp)
+                            .background(
+                                color = if (isLocked) color.copy(alpha = 0.4f) else color,
+                                shape = CircleShape
+                            )
+                            .clickable {
+                                if (isLocked) {
+                                    Toast
+                                        .makeText(
+                                            context,
+                                            "Upgrade to Premium to unlock this color",
+                                            Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                                } else {
+                                    onColorSelected(swatch.hex)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            isSelected -> Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                modifier = Modifier.size(20.dp),
+                                tint = Color.White
+                            )
+                            isLocked -> Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = "Locked",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White.copy(alpha = 0.8f)
+                            )
                         }
                     }
                 }

@@ -11,6 +11,7 @@ data class AppSettings(
         "Clap (Airy)", "Clap", "Clap (Wet)"
     ),
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val accentColorHex: String = "FFE57373",
     val segmentedDisplayEnabled: Boolean = true,
     val hasShownSoundHelpOverlay: Boolean = false,
     val isPremium: Boolean = false
