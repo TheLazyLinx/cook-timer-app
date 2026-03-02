@@ -9,12 +9,12 @@ lifecycleRuntimeKtx = "2.8.6"
 activityCompose = "1.8.0"
 composeBom = "2024.09.00"
 hilt = "2.51.1"
-javapoet = "1.13.0"
 room = "2.6.1"
 ksp = "2.0.21-1.0.27"
 navigationCompose = "2.8.3"
 datastore = "1.1.1"
 billing = "7.1.1"
+mockk = "1.13.12"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -38,13 +38,13 @@ material-icons-extended = { group = "androidx.compose.material", name = "materia
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
 androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version = "1.2.0" }
-javapoet = { group = "com.squareup", name = "javapoet", version.ref = "javapoet" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "billing" }
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

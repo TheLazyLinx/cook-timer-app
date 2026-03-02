@@ -73,7 +73,8 @@ class SfxPlayer @Inject constructor(
     }
 
     fun play(sfx: SfxId) {
-        if (!enabled || !canPlayNow()) return
+        if (!enabled) return
+        if (!sfx.playWhenLocked && !canPlayNow()) return
         val now = SystemClock.elapsedRealtime()
         
         // Anti-spam global throttle (very short)
@@ -130,7 +131,8 @@ class SfxPlayer @Inject constructor(
     private fun canPlayNow(): Boolean {
         if (!powerManager.isInteractive) return false
         if (keyguardManager.isDeviceLocked || keyguardManager.isKeyguardLocked) return false
-        if (notificationManager.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL) {
+        val filter = notificationManager.currentInterruptionFilter
+        if (filter == NotificationManager.INTERRUPTION_FILTER_NONE) {
             return false
         }
         return true

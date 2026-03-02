@@ -6,9 +6,12 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import ro.maris.tools.cooktimer.service.ActiveTimerManager
+import ro.maris.tools.cooktimer.service.toActiveTimerInfoOrNull
 import ro.maris.tools.cooktimer.audio.SfxPlayer
 import ro.maris.tools.cooktimer.audio.SoundDetector
 import ro.maris.tools.cooktimer.domain.engine.TimeProvider
@@ -36,8 +39,11 @@ class TimerViewModel @Inject constructor(
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
+    private val activeTimerManager: ActiveTimerManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    private val timerId = "timer-${System.identityHashCode(this)}"
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -94,6 +100,7 @@ class TimerViewModel @Inject constructor(
     fun reset() = engine.reset()
 
     fun lap() {
+        engine.lap()
         vibrationHelper.vibrateVirtualKey()
     }
 
@@ -120,6 +127,12 @@ class TimerViewModel @Inject constructor(
         engine.loadPreset(defaultTimerPreset)
         soundDetector.debugContext = "Timer"
         gestureDelegate.startObserving()
+
+        viewModelScope.launch {
+            engine.state.collectLatest { runState ->
+                activeTimerManager.update(timerId, runState?.toActiveTimerInfoOrNull())
+            }
+        }
     }
 
     /**
@@ -170,5 +183,9 @@ class TimerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         gestureDelegate.clear()
+        val stillActive = engine.state.value?.let {
+            it.phase == Phase.RUNNING || it.phase == Phase.PAUSED || it.isStopwatchRunning
+        } ?: false
+        activeTimerManager.unregister(timerId, stillActive)
     }
 }

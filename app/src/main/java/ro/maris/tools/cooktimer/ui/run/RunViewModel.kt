@@ -20,6 +20,8 @@ import ro.maris.tools.cooktimer.domain.model.SoundTriggerAction
 import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
+import ro.maris.tools.cooktimer.service.ActiveTimerManager
+import ro.maris.tools.cooktimer.service.toActiveTimerInfoOrNull
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
 import ro.maris.tools.cooktimer.ui.sound.SoundGestureDelegate
 import javax.inject.Inject
@@ -33,8 +35,11 @@ class RunViewModel @Inject constructor(
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
+    private val activeTimerManager: ActiveTimerManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    private val timerId = "run-${System.identityHashCode(this)}"
 
     private val engine = TimerEngine(
         timeProvider = timeProvider,
@@ -101,6 +106,12 @@ class RunViewModel @Inject constructor(
             }
         }
         gestureDelegate.startObserving()
+
+        viewModelScope.launch {
+            engine.state.collectLatest { runState ->
+                activeTimerManager.update(timerId, runState?.toActiveTimerInfoOrNull())
+            }
+        }
     }
 
     /**
@@ -149,5 +160,9 @@ class RunViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         gestureDelegate.clear()
+        val stillActive = engine.state.value?.let {
+            it.phase == Phase.RUNNING || it.phase == Phase.PAUSED || it.isStopwatchRunning
+        } ?: false
+        activeTimerManager.unregister(timerId, stillActive)
     }
 }

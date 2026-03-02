@@ -7,6 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,6 +25,8 @@ import ro.maris.tools.cooktimer.domain.model.StartMode
 import ro.maris.tools.cooktimer.domain.repository.BillingRepository
 import ro.maris.tools.cooktimer.domain.repository.PresetRepository
 import ro.maris.tools.cooktimer.domain.repository.SettingsRepository
+import ro.maris.tools.cooktimer.service.ActiveTimerManager
+import ro.maris.tools.cooktimer.service.toActiveTimerInfoOrNull
 import ro.maris.tools.cooktimer.ui.haptics.VibrationHelper
 import ro.maris.tools.cooktimer.ui.sound.SoundGestureDelegate
 import javax.inject.Inject
@@ -39,8 +42,11 @@ class StopwatchViewModel @Inject constructor(
     private val soundDetector: SoundDetector,
     private val vibrationHelper: VibrationHelper,
     private val sfxPlayer: SfxPlayer,
+    private val activeTimerManager: ActiveTimerManager,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    private val timerId = "stopwatch-${System.identityHashCode(this)}"
 
     enum class HistorySlot {
         RECENT,
@@ -147,6 +153,12 @@ class StopwatchViewModel @Inject constructor(
         engine.loadPreset(defaultStopwatchPreset)
         soundDetector.debugContext = "Stopwatch"
         gestureDelegate.startObserving()
+
+        viewModelScope.launch {
+            engine.state.collectLatest { runState ->
+                activeTimerManager.update(timerId, runState?.toActiveTimerInfoOrNull())
+            }
+        }
     }
 
     /**
@@ -198,6 +210,10 @@ class StopwatchViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         gestureDelegate.clear()
+        val stillActive = engine.state.value?.let {
+            it.phase == Phase.RUNNING || it.phase == Phase.PAUSED || it.isStopwatchRunning
+        } ?: false
+        activeTimerManager.unregister(timerId, stillActive)
     }
 
     private fun buildCurrentSessionHistorySnapshot(): SessionHistory? {
@@ -227,7 +243,7 @@ class StopwatchViewModel @Inject constructor(
     }
 
     private fun loadPersistedHistoryState(): HistoryState {
-        val persisted = HistorySlot.values().associateWith { slot ->
+        val persisted = HistorySlot.entries.associateWith { slot ->
             loadPersistedHistory(slot)
         }
         return HistoryState(histories = persisted)

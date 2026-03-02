@@ -3,13 +3,19 @@ package ro.maris.tools.cooktimer.audio
 import androidx.annotation.RawRes
 import ro.maris.tools.cooktimer.R
 
-enum class SfxId(@RawRes val resId: Int, val volume: Float = 1f, val durationMs: Long = 300L) {
+enum class SfxId(
+    @RawRes val resId: Int,
+    val volume: Float = 1f,
+    val durationMs: Long = 300L,
+    /** When true the sound plays even with the screen off or keyguard active. */
+    val playWhenLocked: Boolean = false
+) {
     ButtonPress(R.raw.impactgeneric_light_003, 1f, 150L),
     OpenScreen(R.raw.impactwood_light_002, 1f, 200L),
     PresetSaved(R.raw.impactgeneric_light_003, 1f, 150L),
     StepAdded(R.raw.impactwood_light_002, 1f, 200L),
-    TimerFinished(R.raw.toggle_002, 0.6f, 400L),
-    StopwatchFinished(R.raw.toggle_002, 0.6f, 400L),
+    TimerFinished(R.raw.toggle_002, 0.6f, 400L, playWhenLocked = true),
+    StopwatchFinished(R.raw.toggle_002, 0.6f, 400L, playWhenLocked = true),
     AutoParse(R.raw.impactgeneric_light_003, 1f, 150L),
     PresetDuplicate(R.raw.impactgeneric_light_003, 1f, 150L),
     PresetDelete(R.raw.impactgeneric_light_003, 1f, 150L),
@@ -18,7 +24,7 @@ enum class SfxId(@RawRes val resId: Int, val volume: Float = 1f, val durationMs:
     NavPresets(R.raw.impactwood_light_002, 1f, 200L),
     RunPrimaryNext(R.raw.impactgeneric_light_003, 1f, 150L),
     RunNavRow(R.raw.impactgeneric_light_003, 1f, 150L),
-    PresetFinished(R.raw.toggle_002, 0.6f, 400L),
+    PresetFinished(R.raw.toggle_002, 0.6f, 400L, playWhenLocked = true),
     StepStart(R.raw.metalclick, 1f, 150L),
     DetectionFailed(R.raw.rollover6, 0.5f, 600L),
     DetectionSuccess(R.raw.drop_003, 0.5f, 500L)
